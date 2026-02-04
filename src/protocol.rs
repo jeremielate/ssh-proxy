@@ -1,3 +1,4 @@
+use rkyv::rancor::Error;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -115,7 +116,7 @@ where
     reader.read_exact(&mut buf).await?;
 
     // Deserialize
-    let msg: T = bincode::deserialize(&buf)?;
+    let msg: T = postcard::from_bytes(&buf)?;
     Ok(Some(msg))
 }
 
@@ -125,7 +126,7 @@ where
     W: AsyncWrite + Unpin,
     T: Serialize,
 {
-    let data = bincode::serialize(msg)?;
+    let data: Vec<u8> = postcard::to_allocvec(msg)?;
     let len = data.len() as u32;
 
     writer.write_all(&len.to_be_bytes()).await?;

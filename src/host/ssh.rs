@@ -1,8 +1,9 @@
 use anyhow::Context;
-use async_trait::async_trait;
-use russh::client::{self, Handler, Msg};
+use russh::client::{self, AuthResult, Handler, Msg};
+use russh::keys::agent::client::AgentClient;
+use russh::keys::{PrivateKeyWithHashAlg, PublicKey, load_secret_key};
 use russh::{Channel, ChannelMsg};
-use russh_keys::key::PrivateKeyWithHashAlg;
+use std::future::ready;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -19,26 +20,27 @@ pub struct SshConfig {
 
 struct SshHandler;
 
-#[async_trait]
 impl Handler for SshHandler {
     type Error = anyhow::Error;
 
-    async fn check_server_key(
-        &mut self,
-        _server_public_key: &russh_keys::PublicKey,
-    ) -> Result<bool, Self::Error> {
-        // TODO: Implement proper host key verification
-        // For now, accept all keys (like ssh -o StrictHostKeyChecking=no)
-        warn!("Accepting server key without verification (insecure)");
-        Ok(true)
+    fn check_server_key(
+            &mut self,
+            _server_public_key: &russh::keys::ssh_key::PublicKey,
+        ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
+
+        ready(Ok(true))
     }
+
 }
 
 /// Connect to remote via SSH and start the remote proxy binary
 /// Returns (reader, writer) for communicating with the remote process
 pub async fn connect(
     config: SshConfig,
-) -> anyhow::Result<(impl AsyncRead + Unpin + Send, impl AsyncWrite + Unpin + Send)> {
+) -> anyhow::Result<(
+    impl AsyncRead + Unpin + Send,
+    impl AsyncWrite + Unpin + Send,
+)> {
     let ssh_config = client::Config::default();
     let ssh_config = Arc::new(ssh_config);
 
@@ -55,14 +57,13 @@ pub async fn connect(
     let authenticated = if let Some(identity_path) = &config.identity {
         // Key-based authentication
         info!("Using key-based authentication from {:?}", identity_path);
-        let key = russh_keys::load_secret_key(identity_path, None)
-            .context("Failed to load private key")?;
-        let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(key), None)
-            .context("Failed to create key with hash algorithm")?;
-        session
+        let key = load_secret_key(identity_path, None).context("Failed to load private key")?;
+        let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(key), None);
+        let auth_result = session
             .authenticate_publickey(&config.user, key_with_hash)
             .await
-            .context("Public key authentication failed")?
+            .context("Public key authentication failed")?;
+        auth_result.success()
     } else {
         // Try SSH agent first
         info!("Attempting SSH agent authentication");
@@ -77,10 +78,11 @@ pub async fn connect(
                 ))
                 .context("Failed to read password")?;
 
-                session
+                let auth_result = session
                     .authenticate_password(&config.user, &password)
                     .await
-                    .context("Password authentication failed")?
+                    .context("Password authentication failed")?;
+                auth_result.success()
             }
         }
     };
@@ -114,7 +116,7 @@ async fn try_agent_auth(
     session: &mut client::Handle<SshHandler>,
     user: &str,
 ) -> anyhow::Result<bool> {
-    let mut agent = russh_keys::agent::client::AgentClient::connect_env()
+    let mut agent = AgentClient::connect_env()
         .await
         .context("Failed to connect to SSH agent")?;
 
@@ -125,11 +127,11 @@ async fn try_agent_auth(
         // For agent auth, we need to use authenticate_publickey_with which uses the agent
         // to sign the authentication request
         match session
-            .authenticate_publickey_with(user, pubkey, &mut agent)
+            .authenticate_publickey_with(user, pubkey, None, &mut agent)
             .await
         {
-            Ok(true) => return Ok(true),
-            Ok(false) => continue,
+            Ok(AuthResult::Success) => return Ok(true),
+            Ok(AuthResult::Failure { .. }) => continue,
             Err(e) => {
                 debug!("Agent auth attempt failed: {}", e);
                 continue;
