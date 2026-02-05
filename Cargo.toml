@@ -17,7 +17,6 @@ dashmap = "6"
 serde = { version = "1", features = ["derive"] }
 async-trait = "*"
 rpassword = "*"
-rkyv = "0.8.14"
 postcard = { version = "1.1.3", features = ["alloc"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

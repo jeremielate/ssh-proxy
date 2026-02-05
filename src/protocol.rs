@@ -1,4 +1,3 @@
-use rkyv::rancor::Error;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
