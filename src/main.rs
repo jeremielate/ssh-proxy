@@ -4,7 +4,7 @@ mod packet;
 mod protocol;
 mod remote;
 
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 
 use clap::Parser;
 use cli::{Cli, Command};
@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
                 let log_file = OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .write(true)
+                    
                     .open(cache_home)?;
                 tracing_subscriber::registry()
                     .with(fmt::layer().with_writer(log_file))

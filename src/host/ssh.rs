@@ -2,14 +2,14 @@ use anyhow::Context;
 use inquire::{Password, Text};
 use russh::client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse, Msg};
 use russh::keys::agent::client::AgentClient;
-use russh::keys::{PrivateKeyWithHashAlg, PublicKey, load_secret_key};
+use russh::keys::{PrivateKeyWithHashAlg, load_secret_key};
 use russh::{Channel, ChannelMsg, ChannelWriteHalf, MethodKind};
 use std::future::ready;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 pub struct SshConfig {
     pub user: String,
@@ -318,7 +318,7 @@ impl AsyncWrite for ChannelWriter {
         match fut.as_mut().poll(cx) {
             std::task::Poll::Ready(Ok(n)) => std::task::Poll::Ready(Ok(n)),
             std::task::Poll::Ready(Err(e)) => {
-                std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e)))
+                std::task::Poll::Ready(Err(std::io::Error::other(e)))
             }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
@@ -350,7 +350,7 @@ impl AsyncWrite for ChannelWriter {
         match fut.as_mut().poll(cx) {
             std::task::Poll::Ready(Ok(_)) => std::task::Poll::Ready(Ok(())),
             std::task::Poll::Ready(Err(e)) => {
-                std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e)))
+                std::task::Poll::Ready(Err(std::io::Error::other(e)))
             }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }

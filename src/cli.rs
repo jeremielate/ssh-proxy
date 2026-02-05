@@ -25,7 +25,7 @@ pub struct HostArgs {
     pub remote: String,
 
     /// Remote SSH user
-    #[arg(short, long)]
+    #[arg(short, long, default_value_t = default_user())]
     pub user: String,
 
     /// Subnets to route through the tunnel (e.g., 192.168.1.0/24)
@@ -55,6 +55,12 @@ pub struct HostArgs {
     /// Enable verbose logging
     #[arg(short, long)]
     pub verbose: bool,
+}
+
+fn default_user() -> String {
+    users::get_current_username()
+        .and_then(|u| u.into_string().ok())
+        .unwrap_or_else(|| String::from("unknown"))
 }
 
 /// Parse a remote string like "user@host" or "user@host:port"

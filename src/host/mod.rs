@@ -9,7 +9,6 @@ use crate::protocol::{HostMessage, RemoteMessage, read_message, write_message};
 use nat::{ConnectionState, NatTable};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
@@ -157,22 +156,20 @@ where
 
             // Send messages to remote
             msg = to_remote_rx.recv() => {
-                if let Some(msg) = msg {
-                    if let Err(e) = write_message(&mut ssh_writer, &msg).await {
+                if let Some(msg) = msg
+                    && let Err(e) = write_message(&mut ssh_writer, &msg).await {
                         error!("SSH write error: {}", e);
                         break;
                     }
-                }
             }
 
             // Write packets to TUN
             packet = to_tun_rx.recv() => {
-                if let Some(packet) = packet {
-                    if let Err(e) = tun_device.write(&packet).await {
+                if let Some(packet) = packet
+                    && let Err(e) = tun_device.write(&packet).await {
                         error!("TUN write error: {}", e);
                         break;
                     }
-                }
             }
 
             _ = ctrl_c() => {

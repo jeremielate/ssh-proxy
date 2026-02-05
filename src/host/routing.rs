@@ -1,12 +1,12 @@
 use std::net::Ipv4Addr;
 
-use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteMessage, RouteProtocol};
+use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteMessage};
 use rtnetlink::RouteMessageBuilder;
 use tracing::{debug, info};
 
 use {
     futures::TryStreamExt,
-    rtnetlink::{Handle, IpVersion, new_connection},
+    rtnetlink::{Handle, new_connection},
 };
 
 /// Add a route for a subnet through the TUN interface
@@ -69,9 +69,9 @@ pub async fn remove_route(tun_name: &str, subnet: Ipv4Addr, prefix: u8) -> anyho
 
     while let Some(route) = routes.try_next().await? {
         // Check if this is our route
-        if let Some((dest, test_if_index)) = get_destination_and_interface_attributes(&route) {
-            if let RouteAddress::Inet(dest_ip) = dest {
-                if *dest_ip == subnet
+        if let Some((dest, test_if_index)) = get_destination_and_interface_attributes(&route)
+            && let RouteAddress::Inet(dest_ip) = dest
+                && *dest_ip == subnet
                     && route.header.destination_prefix_length == prefix
                     && test_if_index == if_index
                 {
@@ -79,8 +79,6 @@ pub async fn remove_route(tun_name: &str, subnet: Ipv4Addr, prefix: u8) -> anyho
                     info!("Removed route {}/{} via {}", subnet, prefix, tun_name);
                     return Ok(());
                 }
-            }
-        }
     }
 
     anyhow::bail!("Route {}/{} via {} not found", subnet, prefix, tun_name)

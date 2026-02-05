@@ -78,12 +78,11 @@ where
 
                 // Send responses back to host
                 response = self.response_rx.recv() => {
-                    if let Some(msg) = response {
-                        if let Err(e) = write_message(&mut self.writer, &msg).await {
+                    if let Some(msg) = response
+                        && let Err(e) = write_message(&mut self.writer, &msg).await {
                             error!("Error writing response: {}", e);
                             break;
                         }
-                    }
                 }
             }
 

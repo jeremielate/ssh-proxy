@@ -111,21 +111,19 @@ impl NatTable {
 
     /// Advance the TCP sequence number
     pub fn advance_tcp_seq(&self, id: u32, bytes: u32) {
-        if let Some(key) = self.tcp_by_id.get(&id) {
-            if let Some(mut conn) = self.tcp_by_key.get_mut(key.value()) {
+        if let Some(key) = self.tcp_by_id.get(&id)
+            && let Some(mut conn) = self.tcp_by_key.get_mut(key.value()) {
                 conn.seq = conn.seq.wrapping_add(bytes);
             }
-        }
     }
 
     /// Update TCP ack number based on received data
     #[allow(dead_code)]
     pub fn update_tcp_ack(&self, id: u32, ack: u32) {
-        if let Some(key) = self.tcp_by_id.get(&id) {
-            if let Some(mut conn) = self.tcp_by_key.get_mut(key.value()) {
+        if let Some(key) = self.tcp_by_id.get(&id)
+            && let Some(mut conn) = self.tcp_by_key.get_mut(key.value()) {
                 conn.ack = ack;
             }
-        }
     }
 
     /// Track a UDP packet for return path routing
