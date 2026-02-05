@@ -20,9 +20,13 @@ pub enum Command {
 
 #[derive(Parser, Debug)]
 pub struct HostArgs {
-    /// Remote SSH destination (user@host or user@host:port)
+    /// Remote SSH destination (host or host:port)
     #[arg(short, long)]
     pub remote: String,
+
+    /// Remote SSH user
+    #[arg(short, long)]
+    pub user: String,
 
     /// Subnets to route through the tunnel (e.g., 192.168.1.0/24)
     #[arg(short, long, value_delimiter = ',')]
@@ -54,21 +58,14 @@ pub struct HostArgs {
 }
 
 /// Parse a remote string like "user@host" or "user@host:port"
-pub fn parse_remote(remote: &str) -> anyhow::Result<(String, String, u16)> {
-    let (user_host, port) = if remote.contains(':') {
-        let parts: Vec<&str> = remote.rsplitn(2, ':').collect();
-        let port: u16 = parts[0].parse()?;
-        (parts[1], port)
+pub fn parse_remote(remote: &str) -> anyhow::Result<(String, u16)> {
+    if remote.contains(':') {
+        let parts: Vec<&str> = remote.splitn(2, ':').collect();
+        let port: u16 = parts[1].parse()?;
+        Ok((parts[0].to_string(), port))
     } else {
-        (remote, 22)
-    };
-
-    let parts: Vec<&str> = user_host.splitn(2, '@').collect();
-    if parts.len() != 2 {
-        anyhow::bail!("Invalid remote format. Expected user@host or user@host:port");
+        Ok((remote.to_string(), 22))
     }
-
-    Ok((parts[0].to_string(), parts[1].to_string(), port))
 }
 
 /// Parse a CIDR notation string like "192.168.1.0/24"
@@ -94,13 +91,11 @@ mod tests {
 
     #[test]
     fn test_parse_remote() {
-        let (user, host, port) = parse_remote("user@example.com").unwrap();
-        assert_eq!(user, "user");
+        let (host, port) = parse_remote("example.com").unwrap();
         assert_eq!(host, "example.com");
         assert_eq!(port, 22);
 
-        let (user, host, port) = parse_remote("admin@192.168.1.1:2222").unwrap();
-        assert_eq!(user, "admin");
+        let (host, port) = parse_remote("192.168.1.1:2222").unwrap();
         assert_eq!(host, "192.168.1.1");
         assert_eq!(port, 2222);
     }

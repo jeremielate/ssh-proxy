@@ -20,8 +20,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     info!("Starting host mode");
 
     // Parse remote connection info
-    let (user, host, port) = parse_remote(&args.remote)?;
-    info!("Connecting to {}@{}:{}", user, host, port);
+    let (host, port) = parse_remote(&args.remote)?;
+    info!("Connecting to {}@{}:{}", args.user, host, port);
 
     // Parse TUN IP
     let (tun_ip, tun_prefix) = parse_cidr(&args.tun_ip)?;
@@ -40,7 +40,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     // Connect via SSH and start remote proxy
     let ssh_config = ssh::SshConfig {
-        user,
+        user: args.user,
         host: host.clone(),
         port,
         identity: args.identity,
