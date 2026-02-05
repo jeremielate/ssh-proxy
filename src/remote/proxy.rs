@@ -52,7 +52,8 @@ pub async fn handle_tcp_connection(
                     Ok(0) => {
                         // Connection closed by remote
                         debug!("TCP connection closed by remote: id={}", id);
-                        let _ = response_tx.send(RemoteMessage::TcpClosed { id }).await;
+                        // Already sent at line "Ensure we notify host of close"
+                        // let _ = response_tx.send(RemoteMessage::TcpClosed { id }).await;
                         break;
                     }
                     Ok(n) => {
