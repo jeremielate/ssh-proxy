@@ -3,14 +3,15 @@ mod routing;
 mod ssh;
 mod tun;
 
-use crate::cli::{parse_cidr, parse_remote, HostArgs};
-use crate::packet::{parse_ip_packet, ParsedPacket, TcpFlags, TcpPacketInfo, UdpPacketInfo};
-use crate::protocol::{read_message, write_message, HostMessage, RemoteMessage};
+use crate::cli::{HostArgs, parse_cidr, parse_remote};
+use crate::packet::{ParsedPacket, TcpFlags, TcpPacketInfo, UdpPacketInfo, parse_ip_packet};
+use crate::protocol::{HostMessage, RemoteMessage, read_message, write_message};
 use nat::{ConnectionState, NatTable};
 use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -24,7 +25,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     // Parse TUN IP
     let (tun_ip, tun_prefix) = parse_cidr(&args.tun_ip)?;
-    info!("TUN interface: {} with IP {}/{}", args.tun_name, tun_ip, tun_prefix);
+    info!(
+        "TUN interface: {} with IP {}/{}",
+        args.tun_name, tun_ip, tun_prefix
+    );
 
     // Parse subnets to route
     let subnets: Vec<(Ipv4Addr, u8)> = args
@@ -53,7 +57,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // Add routes for subnets
     for (subnet_ip, prefix) in &subnets {
         routing::add_route(&args.tun_name, *subnet_ip, *prefix).await?;
-        info!("Added route for {}/{} via {}", subnet_ip, prefix, args.tun_name);
+        info!(
+            "Added route for {}/{} via {}",
+            subnet_ip, prefix, args.tun_name
+        );
     }
 
     // Run the main proxy loop
@@ -93,7 +100,6 @@ where
     }
 
     let nat_table = Arc::new(NatTable::new());
-    let running = Arc::new(AtomicBool::new(true));
 
     // Channel for messages to send to remote
     let (to_remote_tx, mut to_remote_rx) = mpsc::channel::<HostMessage>(1024);
@@ -104,10 +110,6 @@ where
     let mut tun_buf = vec![0u8; 65536];
 
     loop {
-        if !running.load(Ordering::Relaxed) {
-            break;
-        }
-
         tokio::select! {
             // Read packets from TUN
             result = tun_device.read(&mut tun_buf) => {
@@ -172,11 +174,17 @@ where
                     }
                 }
             }
+
+            _ = ctrl_c() => {
+                debug!("ctrl+c received, quitting");
+                break;
+            }
         }
     }
 
     // Send shutdown to remote
     let _ = write_message(&mut ssh_writer, &HostMessage::Shutdown).await;
+    debug!("shutdown sent");
 
     Ok(())
 }
@@ -230,7 +238,9 @@ async fn handle_outbound_tcp(
         if tcp.flags.fin || tcp.flags.rst {
             debug!("TCP close: id={}", conn_id);
             nat_table.close_tcp_connection(&key);
-            to_remote_tx.send(HostMessage::TcpClose { id: conn_id }).await?;
+            to_remote_tx
+                .send(HostMessage::TcpClose { id: conn_id })
+                .await?;
         } else if !tcp.payload.is_empty() {
             debug!("TCP data: id={}, len={}", conn_id, tcp.payload.len());
             to_remote_tx
@@ -260,7 +270,11 @@ async fn handle_outbound_udp(
 
     debug!(
         "UDP datagram: {}:{} -> {}:{}, len={}",
-        udp.src_ip, udp.src_port, udp.dst_ip, udp.dst_port, udp.payload.len()
+        udp.src_ip,
+        udp.src_port,
+        udp.dst_ip,
+        udp.dst_port,
+        udp.payload.len()
     );
 
     to_remote_tx
@@ -297,7 +311,11 @@ async fn handle_remote_message(
                     key.1, // src_port becomes dst
                     0,     // seq
                     1,     // ack (acknowledging the SYN)
-                    TcpFlags { syn: true, ack: true, ..Default::default() },
+                    TcpFlags {
+                        syn: true,
+                        ack: true,
+                        ..Default::default()
+                    },
                     65535,
                     &[],
                 );
@@ -315,7 +333,11 @@ async fn handle_remote_message(
                     key.1,
                     nat_table.get_tcp_seq(id),
                     nat_table.get_tcp_ack(id),
-                    TcpFlags { ack: true, psh: true, ..Default::default() },
+                    TcpFlags {
+                        ack: true,
+                        psh: true,
+                        ..Default::default()
+                    },
                     65535,
                     &data,
                 );
@@ -334,7 +356,11 @@ async fn handle_remote_message(
                     key.1,
                     nat_table.get_tcp_seq(id),
                     nat_table.get_tcp_ack(id),
-                    TcpFlags { fin: true, ack: true, ..Default::default() },
+                    TcpFlags {
+                        fin: true,
+                        ack: true,
+                        ..Default::default()
+                    },
                     65535,
                     &[],
                 );
@@ -353,7 +379,10 @@ async fn handle_remote_message(
                     key.1,
                     0,
                     0,
-                    TcpFlags { rst: true, ..Default::default() },
+                    TcpFlags {
+                        rst: true,
+                        ..Default::default()
+                    },
                     0,
                     &[],
                 );
@@ -361,21 +390,23 @@ async fn handle_remote_message(
                 nat_table.close_tcp_connection(&key);
             }
         }
-        RemoteMessage::UdpResponse { dst_port, src_ip, src_port, data } => {
+        RemoteMessage::UdpResponse {
+            dst_port,
+            src_ip,
+            src_port,
+            data,
+        } => {
             debug!(
                 "UDP response: src={}:{}, dst_port={}, len={}",
-                src_ip, src_port, dst_port, data.len()
+                src_ip,
+                src_port,
+                dst_port,
+                data.len()
             );
 
             // Find the original source IP for this UDP "connection"
             if let Some(original_src_ip) = nat_table.get_udp_src_ip(dst_port, src_ip, src_port) {
-                let packet = build_udp_packet(
-                    src_ip,
-                    original_src_ip,
-                    src_port,
-                    dst_port,
-                    &data,
-                );
+                let packet = build_udp_packet(src_ip, original_src_ip, src_port, dst_port, &data);
                 to_tun_tx.send(packet).await?;
             } else {
                 warn!("UDP response for unknown mapping: dst_port={}", dst_port);

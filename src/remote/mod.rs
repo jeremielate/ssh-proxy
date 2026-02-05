@@ -53,6 +53,7 @@ where
     async fn run(&mut self) -> anyhow::Result<()> {
         // Send ready message
         write_message(&mut self.writer, &RemoteMessage::Ready).await?;
+        info!("Remote proxy ready");
 
         loop {
             tokio::select! {

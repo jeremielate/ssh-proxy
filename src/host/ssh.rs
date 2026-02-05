@@ -1,8 +1,9 @@
 use anyhow::Context;
-use russh::client::{self, AuthResult, Handler, Msg};
+use inquire::{Password, Text};
+use russh::client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse, Msg};
 use russh::keys::agent::client::AgentClient;
 use russh::keys::{PrivateKeyWithHashAlg, PublicKey, load_secret_key};
-use russh::{Channel, ChannelMsg};
+use russh::{Channel, ChannelMsg, ChannelWriteHalf, MethodKind};
 use std::future::ready;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,13 +25,11 @@ impl Handler for SshHandler {
     type Error = anyhow::Error;
 
     fn check_server_key(
-            &mut self,
-            _server_public_key: &russh::keys::ssh_key::PublicKey,
-        ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
-
+        &mut self,
+        _server_public_key: &russh::keys::ssh_key::PublicKey,
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
         ready(Ok(true))
     }
-
 }
 
 /// Connect to remote via SSH and start the remote proxy binary
@@ -72,11 +71,11 @@ pub async fn connect(
             Ok(false) | Err(_) => {
                 // Fall back to password
                 info!("SSH agent auth failed, falling back to password");
-                let password = rpassword::prompt_password(format!(
-                    "Password for {}@{}: ",
-                    config.user, config.host
-                ))
-                .context("Failed to read password")?;
+                let password =
+                    Password::new(&(format!("Password for {}@{}: ", config.user, config.host)))
+                        .without_confirmation()
+                        .prompt()
+                        .context("Failed to read password")?;
 
                 let auth_result = session
                     .authenticate_password(&config.user, &password)
@@ -131,7 +130,63 @@ async fn try_agent_auth(
             .await
         {
             Ok(AuthResult::Success) => return Ok(true),
-            Ok(AuthResult::Failure { .. }) => continue,
+            Ok(AuthResult::Failure {
+                remaining_methods,
+                partial_success,
+            }) => {
+                if !partial_success {
+                    continue;
+                }
+                for method in remaining_methods.iter() {
+                    if *method == MethodKind::KeyboardInteractive {
+                        let keyb_response = session
+                            .authenticate_keyboard_interactive_start(user, None)
+                            .await
+                            .context("cannot start keyboard interactive")?;
+                        match keyb_response {
+                            client::KeyboardInteractiveAuthResponse::Success => {
+                                return Ok(true);
+                            }
+                            client::KeyboardInteractiveAuthResponse::InfoRequest {
+                                name,
+                                instructions,
+                                prompts,
+                            } => {
+                                debug!(
+                                    "keyboard interactive name={name} instructions={instructions}"
+                                );
+                                let responses = prompts
+                                    .into_iter()
+                                    .map(|prompt| {
+                                        if prompt.echo {
+                                            Text::new(&prompt.prompt)
+                                                .prompt()
+                                                .context("Failed to read response to prompt")
+                                        } else {
+                                            Password::new(&prompt.prompt)
+                                                .without_confirmation()
+                                                .prompt()
+                                                .context("Failed to read response to prompt")
+                                        }
+                                    })
+                                    .collect::<Result<Vec<String>, _>>()?;
+
+                                let keyb_response = session
+                                    .authenticate_keyboard_interactive_respond(responses)
+                                    .await
+                                    .context("cannot respond keyboard interactive")?;
+                                if matches!(keyb_response, KeyboardInteractiveAuthResponse::Success)
+                                {
+                                    return Ok(true);
+                                }
+                            }
+                            client::KeyboardInteractiveAuthResponse::Failure { .. } => {
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
             Err(e) => {
                 debug!("Agent auth attempt failed: {}", e);
                 continue;
@@ -144,16 +199,15 @@ async fn try_agent_auth(
 
 fn create_channel_io(channel: Channel<Msg>) -> (ChannelReader, ChannelWriter) {
     let (data_tx, data_rx) = mpsc::channel::<Vec<u8>>(256);
-    let channel = Arc::new(tokio::sync::Mutex::new(channel));
+    let (mut r_channel, w_channel) = channel.split();
 
     // Spawn a task to read from the channel and send data through the mpsc
-    let channel_clone = channel.clone();
     tokio::spawn(async move {
         loop {
-            let mut channel = channel_clone.lock().await;
-            match channel.wait().await {
+            info!("locking channel");
+            info!("channel locked");
+            match r_channel.wait().await {
                 Some(ChannelMsg::Data { data }) => {
-                    drop(channel); // Release lock before sending
                     if data_tx.send(data.to_vec()).await.is_err() {
                         break;
                     }
@@ -192,7 +246,9 @@ fn create_channel_io(channel: Channel<Msg>) -> (ChannelReader, ChannelWriter) {
         rx: data_rx,
         buffer: Vec::new(),
     };
-    let writer = ChannelWriter { channel };
+    let writer = ChannelWriter {
+        channel: Arc::new(tokio::sync::Mutex::new(w_channel)),
+    };
 
     (reader, writer)
 }
@@ -236,7 +292,7 @@ impl AsyncRead for ChannelReader {
 }
 
 pub struct ChannelWriter {
-    channel: Arc<tokio::sync::Mutex<Channel<Msg>>>,
+    channel: Arc<tokio::sync::Mutex<ChannelWriteHalf<Msg>>>,
 }
 
 impl AsyncWrite for ChannelWriter {
@@ -252,7 +308,9 @@ impl AsyncWrite for ChannelWriter {
         let len = data.len();
 
         let fut = async move {
+            debug!("poll_write AsyncWrite locking channel");
             let channel = channel.lock().await;
+            debug!("poll_write AsyncWrite channel locked");
             channel.data(&data[..]).await.map(|_| len)
         };
 
@@ -282,7 +340,9 @@ impl AsyncWrite for ChannelWriter {
 
         let channel = self.channel.clone();
         let fut = async move {
+            debug!("poll_shutdown AsyncWrite locking channel");
             let channel = channel.lock().await;
+            debug!("poll_shutdown AsyncWrite channel locked");
             channel.eof().await
         };
 

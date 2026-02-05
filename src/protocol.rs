@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 use std::net::Ipv4Addr;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -111,6 +112,7 @@ where
     }
 
     // Read message body
+    debug!("reading message len={len}");
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf).await?;
 
@@ -127,6 +129,7 @@ where
 {
     let data: Vec<u8> = postcard::to_allocvec(msg)?;
     let len = data.len() as u32;
+    debug!("writing message len={len}");
 
     writer.write_all(&len.to_be_bytes()).await?;
     writer.write_all(&data).await?;
