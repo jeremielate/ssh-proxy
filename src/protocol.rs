@@ -175,11 +175,12 @@ mod tests {
             dst_port: 80,
         };
 
-        let mut buf = Vec::new();
+        let mut buf = Mutex::new(Vec::new());
         write_message(&mut buf, &msg).await.unwrap();
 
-        let mut cursor = Cursor::new(buf);
-        let decoded: HostMessage = read_message(&mut cursor).await.unwrap().unwrap();
+        let inner_buf = buf.into_inner();
+        let cursor = Arc::new(Mutex::new(Cursor::new(inner_buf)));
+        let decoded: HostMessage = read_message(cursor).await.unwrap().unwrap();
 
         match decoded {
             HostMessage::TcpConnect {
