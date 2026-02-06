@@ -60,7 +60,7 @@ pub struct HostArgs {
 fn default_user() -> String {
     users::get_current_username()
         .and_then(|u| u.into_string().ok())
-        .unwrap_or_else(|| String::from("unknown"))
+        .unwrap_or_else(|| String::from("root"))
 }
 
 /// Parse a remote string like "user@host" or "user@host:port"

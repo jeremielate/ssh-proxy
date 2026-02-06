@@ -21,13 +21,14 @@ async fn main() -> anyhow::Result<()> {
         EnvFilter::from_default_env().add_directive("ssh_proxy=debug".parse()?)
     };
 
-    // For remote mode, we must not log to stdout as it's used for protocol
-    match &cli.command {
-        Command::Host(_) => {
+    match cli.command {
+        Command::Host(args) => {
             tracing_subscriber::registry()
-                .with(fmt::layer())
+                .with(fmt::layer().with_line_number(true))
                 .with(filter)
                 .init();
+
+            host::run(args).await
         }
         Command::Remote => {
             // Log to stderr only in remote mode
@@ -36,23 +37,23 @@ async fn main() -> anyhow::Result<()> {
                 let log_file = OpenOptions::new()
                     .create(true)
                     .append(true)
-                    
+                    .write(true)
                     .open(cache_home)?;
                 tracing_subscriber::registry()
-                    .with(fmt::layer().with_writer(log_file))
+                    .with(fmt::layer().with_writer(log_file).with_line_number(true))
                     .with(filter)
                     .init();
             } else {
                 tracing_subscriber::registry()
-                    .with(fmt::layer().with_writer(std::io::stderr))
+                    .with(
+                        fmt::layer()
+                            .with_writer(std::io::stderr)
+                            .with_line_number(true),
+                    )
                     .with(filter)
                     .init();
             };
+            remote::run().await
         }
-    }
-
-    match cli.command {
-        Command::Host(args) => host::run(args).await,
-        Command::Remote => remote::run().await,
     }
 }

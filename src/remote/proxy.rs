@@ -21,6 +21,7 @@ pub async fn handle_tcp_connection(
 
     loop {
         if !running.load(Ordering::Relaxed) {
+            debug!("proxy not running");
             break;
         }
 

@@ -20,43 +20,37 @@ impl AsyncTunDevice {
 }
 
 /// Create a TUN device with the given name and IP address
-#[cfg(target_os = "linux")]
-pub async fn create_tun(name: &str, ip: Ipv4Addr, prefix: u8) -> anyhow::Result<AsyncTunDevice> {
-    use std::process::Command;
+pub async fn create_tun(name: &str) -> anyhow::Result<AsyncTunDevice> {
+    // use netlink_packet_route::link::InfoKind;
+    // use rtnetlink::{LinkMessageBuilder, new_connection};
+    // use std::process::Command;
 
     let mut config = Configuration::default();
 
-    config
-        .tun_name(name)
-        .address(ip)
-        .netmask(prefix_to_netmask(prefix))
-        .mtu(1500)
-        .up();
+    config.tun_name(name).mtu(1500).up();
 
     let device = tun::create_as_async(&config)?;
 
-    info!("Created TUN device {} with IP {}/{}", name, ip, prefix);
+    info!("Created TUN device {}", name);
 
     // The tun crate should bring the interface up, but let's make sure
     // Also set the IP address explicitly using ip command as backup
-    let _ = Command::new("ip")
-        .args(["link", "set", "dev", name, "up"])
-        .output();
+    // let _ = Command::new("ip")
+    //     .args(["link", "set", "dev", name, "up"])
+    //     .output();
 
-    let _ = Command::new("ip")
-        .args(["addr", "add", &format!("{}/{}", ip, prefix), "dev", name])
-        .output();
+    // let (connection, handle, _) = new_connection()?;
+    // tokio::spawn(connection);
+
+    // let index = device.tun_index()?;
+
+    // let link_message = LinkMessageBuilder::<LinkUnspec>::new_with_info_kind(InfoKind::Tun)
+    //     .index(index as u32)
+    //     .up()
+    //     .build();
+    // handle.link().add(link_message).execute().await?;
 
     Ok(AsyncTunDevice { device })
-}
-
-#[cfg(not(target_os = "linux"))]
-pub async fn create_tun(_name: &str, _ip: Ipv4Addr, _prefix: u8) -> anyhow::Result<AsyncTunDevice> {
-    anyhow::bail!(
-        "TUN device creation is only supported on Linux. \
-        Current platform: {}",
-        std::env::consts::OS
-    );
 }
 
 /// Convert a CIDR prefix to a netmask

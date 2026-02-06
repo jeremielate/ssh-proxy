@@ -6,9 +6,11 @@ mod tun;
 use crate::cli::{HostArgs, parse_cidr, parse_remote};
 use crate::packet::{ParsedPacket, TcpFlags, TcpPacketInfo, UdpPacketInfo, parse_ip_packet};
 use crate::protocol::{HostMessage, RemoteMessage, read_message, write_message};
-use nat::{ConnectionState, NatTable};
+
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+
+use nat::{ConnectionState, NatTable};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
@@ -22,12 +24,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let (host, port) = parse_remote(&args.remote)?;
     info!("Connecting to {}@{}:{}", args.user, host, port);
 
-    // Parse TUN IP
-    let (tun_ip, tun_prefix) = parse_cidr(&args.tun_ip)?;
-    info!(
-        "TUN interface: {} with IP {}/{}",
-        args.tun_name, tun_ip, tun_prefix
-    );
+    info!("TUN interface: {}", args.tun_name);
 
     // Parse subnets to route
     let subnets: Vec<(Ipv4Addr, u8)> = args
@@ -50,7 +47,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     info!("SSH connection established, remote proxy started");
 
     // Create TUN interface
-    let tun_device = tun::create_tun(&args.tun_name, tun_ip, tun_prefix).await?;
+    let tun_device = tun::create_tun(&args.tun_name).await?;
     info!("TUN interface created");
 
     // Add routes for subnets
@@ -63,7 +60,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
 
     // Run the main proxy loop
-    let result = run_proxy_loop(tun_device, ssh_reader, ssh_writer, tun_ip).await;
+    let result = run_proxy_loop(tun_device, ssh_reader, ssh_writer).await;
 
     // Cleanup routes
     for (subnet_ip, prefix) in &subnets {
@@ -79,7 +76,6 @@ async fn run_proxy_loop<R, W>(
     mut tun_device: tun::AsyncTunDevice,
     mut ssh_reader: R,
     mut ssh_writer: W,
-    tun_ip: Ipv4Addr,
 ) -> anyhow::Result<()>
 where
     R: AsyncRead + Unpin + Send,
@@ -138,7 +134,6 @@ where
                             msg,
                             &nat_table,
                             &to_tun_tx,
-                            tun_ip,
                         ).await {
                             debug!("Error handling remote message: {}", e);
                         }
@@ -233,7 +228,10 @@ async fn handle_outbound_tcp(
     } else if let Some(conn_id) = nat_table.get_tcp_connection_id(&key) {
         // Existing connection
         if tcp.flags.fin || tcp.flags.rst {
-            debug!("TCP close: id={}", conn_id);
+            debug!(
+                "TCP close: id={} tcp_flags_fin={} tcp_flags_rst={}",
+                conn_id, tcp.flags.fin, tcp.flags.rst
+            );
             nat_table.close_tcp_connection(&key);
             to_remote_tx
                 .send(HostMessage::TcpClose { id: conn_id })
@@ -248,7 +246,7 @@ async fn handle_outbound_tcp(
                 .await?;
         }
     } else {
-        debug!(
+        error!(
             "TCP packet for unknown connection: {}:{} -> {}:{}",
             tcp.src_ip, tcp.src_port, tcp.dst_ip, tcp.dst_port
         );
@@ -290,7 +288,6 @@ async fn handle_remote_message(
     msg: RemoteMessage,
     nat_table: &Arc<NatTable>,
     to_tun_tx: &mpsc::Sender<Vec<u8>>,
-    _tun_ip: Ipv4Addr,
 ) -> anyhow::Result<()> {
     use crate::packet::{build_tcp_packet, build_udp_packet};
 
