@@ -57,10 +57,10 @@ where
 
         let (read_message_tx, mut read_message_rx) = mpsc::channel(1024);
 
-        let task_reader = Arc::clone(&self.reader);
+        let self_reader = Arc::clone(&self.reader);
         tokio::spawn(async move {
             loop {
-                let msg = read_message::<_, HostMessage>(task_reader.clone()).await;
+                let msg = read_message::<_, HostMessage>(self_reader.clone()).await;
                 let break_loop = match msg {
                     Ok(None) | Err(_) => true,
                     _ => false,

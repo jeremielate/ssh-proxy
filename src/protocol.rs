@@ -1,6 +1,7 @@
-use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tracing::debug;
@@ -22,7 +23,6 @@ pub enum HostMessage {
         /// Connection ID
         id: u32,
         /// Data payload
-        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
     /// Close a TCP connection
@@ -39,7 +39,6 @@ pub enum HostMessage {
         /// Destination port
         dst_port: u16,
         /// Datagram payload
-        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
     /// Shutdown the remote proxy
@@ -59,7 +58,6 @@ pub enum RemoteMessage {
         /// Connection ID
         id: u32,
         /// Data payload
-        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
     /// TCP connection closed by remote end
@@ -83,7 +81,6 @@ pub enum RemoteMessage {
         /// Source port of the response
         src_port: u16,
         /// Response payload
-        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
     /// Remote ready
@@ -141,25 +138,6 @@ where
     writer.flush().await?;
 
     Ok(())
-}
-
-mod serde_bytes {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_bytes(bytes)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let bytes: &[u8] = Deserialize::deserialize(deserializer)?;
-        Ok(bytes.to_vec())
-    }
 }
 
 #[cfg(test)]
