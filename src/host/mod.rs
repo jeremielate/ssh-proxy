@@ -4,7 +4,7 @@ mod ssh;
 mod tun;
 
 use crate::cli::{HostArgs, parse_cidr, parse_remote};
-use crate::packet::{ParsedPacket, TcpFlags, TcpPacketInfo, UdpPacketInfo, parse_ip_packet};
+use crate::packet::{ParsedPacket, TcpFlags, TcpPacketInfo, UdpPacketInfo, build_tcp_packet, parse_ip_packet};
 use crate::protocol::{HostMessage, RemoteMessage, read_message, write_message};
 
 use std::net::Ipv4Addr;
@@ -115,6 +115,7 @@ where
                             &packet_data,
                             &nat_table,
                             &to_remote_tx,
+                            &to_tun_tx,
                         ).await {
                             debug!("Error handling TUN packet: {}", e);
                         }
@@ -185,12 +186,13 @@ async fn handle_tun_packet(
     packet_data: &[u8],
     nat_table: &Arc<NatTable>,
     to_remote_tx: &mpsc::Sender<HostMessage>,
+    to_tun_tx: &mpsc::Sender<Vec<u8>>,
 ) -> anyhow::Result<()> {
     let parsed = parse_ip_packet(packet_data)?;
 
     match parsed {
         ParsedPacket::Tcp(tcp) => {
-            handle_outbound_tcp(tcp, nat_table, to_remote_tx).await?;
+            handle_outbound_tcp(tcp, nat_table, to_remote_tx, to_tun_tx).await?;
         }
         ParsedPacket::Udp(udp) => {
             handle_outbound_udp(udp, nat_table, to_remote_tx).await?;
@@ -207,6 +209,7 @@ async fn handle_outbound_tcp(
     tcp: TcpPacketInfo,
     nat_table: &Arc<NatTable>,
     to_remote_tx: &mpsc::Sender<HostMessage>,
+    to_tun_tx: &mpsc::Sender<Vec<u8>>,
 ) -> anyhow::Result<()> {
     let key = (tcp.src_ip, tcp.src_port, tcp.dst_ip, tcp.dst_port);
 
@@ -225,33 +228,143 @@ async fn handle_outbound_tcp(
                 dst_port: tcp.dst_port,
             })
             .await?;
-    } else if let Some(conn_id) = nat_table.get_tcp_connection_id(&key) {
-        // Existing connection
-        if tcp.flags.fin || tcp.flags.rst {
-            debug!(
-                "TCP close: id={} tcp_flags_fin={} tcp_flags_rst={}",
-                conn_id, tcp.flags.fin, tcp.flags.rst
-            );
-            nat_table.close_tcp_connection(&key);
-            to_remote_tx
-                .send(HostMessage::TcpClose { id: conn_id })
-                .await?;
-        } else if !tcp.payload.is_empty() {
-            debug!("TCP data: id={}, len={}", conn_id, tcp.payload.len());
-            // Track client's sequence progress for correct ack in responses
-            nat_table.update_tcp_ack(conn_id, tcp.seq.wrapping_add(tcp.payload.len() as u32));
-            to_remote_tx
-                .send(HostMessage::TcpData {
-                    id: conn_id,
-                    data: tcp.payload,
-                })
-                .await?;
-        }
-    } else {
-        error!(
+        return Ok(());
+    }
+
+    let Some(conn_id) = nat_table.get_tcp_connection_id(&key) else {
+        // Ignore packets for unknown connections (e.g. stale ACKs after close)
+        debug!(
             "TCP packet for unknown connection: {}:{} -> {}:{}",
             tcp.src_ip, tcp.src_port, tcp.dst_ip, tcp.dst_port
         );
+        return Ok(());
+    };
+
+    // RST always immediately closes regardless of state
+    if tcp.flags.rst {
+        debug!("TCP RST: id={}", conn_id);
+        nat_table.close_tcp_connection(&key);
+        to_remote_tx
+            .send(HostMessage::TcpClose { id: conn_id })
+            .await?;
+        return Ok(());
+    }
+
+    let state = nat_table.get_tcp_state(&key);
+
+    match state {
+        Some(ConnectionState::Established) => {
+            if tcp.flags.fin {
+                // App initiates close
+                debug!("TCP FIN from app: id={}", conn_id);
+
+                // ACK the FIN (FIN consumes 1 seq number, plus any payload)
+                let fin_ack = tcp
+                    .seq
+                    .wrapping_add(tcp.payload.len() as u32)
+                    .wrapping_add(1);
+                nat_table.update_tcp_ack(conn_id, fin_ack);
+
+                // Forward any piggybacked data
+                if !tcp.payload.is_empty() {
+                    to_remote_tx
+                        .send(HostMessage::TcpData {
+                            id: conn_id,
+                            data: tcp.payload,
+                        })
+                        .await?;
+                }
+
+                // Send ACK for the FIN back to app
+                let ack_packet = build_tcp_packet(
+                    key.2,
+                    key.0,
+                    key.3,
+                    key.1,
+                    nat_table.get_tcp_seq(conn_id),
+                    nat_table.get_tcp_ack(conn_id),
+                    TcpFlags {
+                        ack: true,
+                        ..Default::default()
+                    },
+                    65535,
+                    &[],
+                );
+                to_tun_tx.send(ack_packet).await?;
+
+                // Tell remote to close
+                to_remote_tx
+                    .send(HostMessage::TcpClose { id: conn_id })
+                    .await?;
+
+                nat_table.set_tcp_state(&key, ConnectionState::FinWait);
+            } else if !tcp.payload.is_empty() {
+                // Normal data
+                debug!("TCP data: id={}, len={}", conn_id, tcp.payload.len());
+                nat_table.update_tcp_ack(
+                    conn_id,
+                    tcp.seq.wrapping_add(tcp.payload.len() as u32),
+                );
+                to_remote_tx
+                    .send(HostMessage::TcpData {
+                        id: conn_id,
+                        data: tcp.payload,
+                    })
+                    .await?;
+            }
+            // Bare ACKs in Established state are normal (acking our data), ignore
+        }
+
+        Some(ConnectionState::CloseWait) => {
+            // Remote already closed, we sent FIN to app, waiting for app's FIN
+            if tcp.flags.fin {
+                debug!("TCP FIN from app (CloseWait): id={}", conn_id);
+
+                // ACK the app's FIN
+                let fin_ack = tcp.seq.wrapping_add(1);
+                nat_table.update_tcp_ack(conn_id, fin_ack);
+
+                let ack_packet = build_tcp_packet(
+                    key.2,
+                    key.0,
+                    key.3,
+                    key.1,
+                    nat_table.get_tcp_seq(conn_id),
+                    nat_table.get_tcp_ack(conn_id),
+                    TcpFlags {
+                        ack: true,
+                        ..Default::default()
+                    },
+                    65535,
+                    &[],
+                );
+                to_tun_tx.send(ack_packet).await?;
+
+                // Both sides have FIN'd, fully closed
+                nat_table.close_tcp_connection(&key);
+            }
+            // Bare ACKs (acking our FIN) are expected, no action needed
+        }
+
+        Some(ConnectionState::LastAck) => {
+            // App already FIN'd, we sent FIN after remote closed, waiting for app's ACK
+            if tcp.flags.ack {
+                debug!("TCP ACK of our FIN (LastAck): id={}", conn_id);
+                nat_table.close_tcp_connection(&key);
+            }
+        }
+
+        Some(ConnectionState::FinWait) => {
+            // We're waiting for remote to close, ignore app packets
+            debug!("Ignoring packet in FinWait state: id={}", conn_id);
+        }
+
+        _ => {
+            debug!(
+                "TCP packet in unexpected state {:?}: id={}",
+                state, conn_id
+            );
+        }
     }
 
     Ok(())
@@ -291,7 +404,7 @@ async fn handle_remote_message(
     nat_table: &Arc<NatTable>,
     to_tun_tx: &mpsc::Sender<Vec<u8>>,
 ) -> anyhow::Result<()> {
-    use crate::packet::{build_tcp_packet, build_udp_packet};
+    use crate::packet::build_udp_packet;
 
     match msg {
         RemoteMessage::TcpConnected { id } => {
@@ -344,26 +457,62 @@ async fn handle_remote_message(
             }
         }
         RemoteMessage::TcpClosed { id } => {
-            debug!("TCP closed: id={}", id);
+            debug!("TCP closed from remote: id={}", id);
             if let Some(key) = nat_table.get_tcp_connection_key(id) {
-                // Send FIN packet
-                let packet = build_tcp_packet(
-                    key.2,
-                    key.0,
-                    key.3,
-                    key.1,
-                    nat_table.get_tcp_seq(id),
-                    nat_table.get_tcp_ack(id),
-                    TcpFlags {
-                        fin: true,
-                        ack: true,
-                        ..Default::default()
-                    },
-                    65535,
-                    &[],
-                );
-                to_tun_tx.send(packet).await?;
-                nat_table.close_tcp_connection(&key);
+                let state = nat_table.get_tcp_state(&key);
+                match state {
+                    Some(ConnectionState::Established) => {
+                        // Remote closed first — send FIN+ACK to app
+                        let packet = build_tcp_packet(
+                            key.2,
+                            key.0,
+                            key.3,
+                            key.1,
+                            nat_table.get_tcp_seq(id),
+                            nat_table.get_tcp_ack(id),
+                            TcpFlags {
+                                fin: true,
+                                ack: true,
+                                ..Default::default()
+                            },
+                            65535,
+                            &[],
+                        );
+                        // FIN consumes 1 sequence number
+                        nat_table.advance_tcp_seq(id, 1);
+                        to_tun_tx.send(packet).await?;
+                        nat_table.set_tcp_state(&key, ConnectionState::CloseWait);
+                    }
+                    Some(ConnectionState::FinWait) => {
+                        // App closed first, remote now confirms close — send FIN+ACK to app
+                        let packet = build_tcp_packet(
+                            key.2,
+                            key.0,
+                            key.3,
+                            key.1,
+                            nat_table.get_tcp_seq(id),
+                            nat_table.get_tcp_ack(id),
+                            TcpFlags {
+                                fin: true,
+                                ack: true,
+                                ..Default::default()
+                            },
+                            65535,
+                            &[],
+                        );
+                        nat_table.advance_tcp_seq(id, 1);
+                        to_tun_tx.send(packet).await?;
+                        nat_table.set_tcp_state(&key, ConnectionState::LastAck);
+                    }
+                    _ => {
+                        // Already closing or unexpected state, just clean up
+                        debug!(
+                            "TcpClosed in unexpected state {:?}: id={}",
+                            state, id
+                        );
+                        nat_table.close_tcp_connection(&key);
+                    }
+                }
             }
         }
         RemoteMessage::TcpError { id, error } => {

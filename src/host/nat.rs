@@ -11,12 +11,15 @@ pub type TcpKey = (Ipv4Addr, u16, Ipv4Addr, u16);
 pub type UdpKey = (Ipv4Addr, u16, Ipv4Addr, u16);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ConnectionState {
     SynSent,
     Established,
+    /// App sent FIN first, we ACK'd it and told remote to close, waiting for TcpClosed
     FinWait,
-    Closed,
+    /// Remote closed first, we sent FIN to app, waiting for app's FIN
+    CloseWait,
+    /// Both sides initiated close, we sent FIN to app, waiting for app's ACK
+    LastAck,
 }
 
 struct TcpConnection {
@@ -77,6 +80,11 @@ impl NatTable {
     /// Get the TCP key for a connection ID
     pub fn get_tcp_connection_key(&self, id: u32) -> Option<TcpKey> {
         self.tcp_by_id.get(&id).map(|r| *r.value())
+    }
+
+    /// Get the state of a TCP connection
+    pub fn get_tcp_state(&self, key: &TcpKey) -> Option<ConnectionState> {
+        self.tcp_by_key.get(key).map(|conn| conn.state)
     }
 
     /// Set the state of a TCP connection
