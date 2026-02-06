@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 use tracing::debug;
 use std::net::Ipv4Addr;
-use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Messages sent from host to remote

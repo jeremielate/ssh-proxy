@@ -126,17 +126,15 @@ async fn keyboard_interactive_info_request(
         .map(|prompt| {
             if prompt.prompt.is_empty() {
                 Ok(String::new())
+            } else if prompt.echo {
+                Text::new(&prompt.prompt)
+                    .prompt()
+                    .context("Failed to read response to prompt")
             } else {
-                if prompt.echo {
-                    Text::new(&prompt.prompt)
-                        .prompt()
-                        .context("Failed to read response to prompt")
-                } else {
-                    Password::new(&prompt.prompt)
-                        .without_confirmation()
-                        .prompt()
-                        .context("Failed to read response to prompt")
-                }
+                Password::new(&prompt.prompt)
+                    .without_confirmation()
+                    .prompt()
+                    .context("Failed to read response to prompt")
             }
         })
         .collect::<Result<Vec<String>, _>>()?;
@@ -176,7 +174,7 @@ async fn try_agent_auth(
                 if !partial_success {
                     continue;
                 }
-                for method in remaining_methods.into_iter() {
+                for method in remaining_methods.iter() {
                     if matches!(method, MethodKind::KeyboardInteractive) {
                         debug!("Begin keyboard interactive");
                         let mut keyb_response = session
