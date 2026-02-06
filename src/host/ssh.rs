@@ -122,7 +122,7 @@ async fn try_agent_auth(
     let identities = agent.request_identities().await?;
 
     for pubkey in identities {
-        debug!("Trying SSH agent key");
+        debug!("Trying SSH agent key {}", pubkey.fingerprint(Default::default()));
         // For agent auth, we need to use authenticate_publickey_with which uses the agent
         // to sign the authentication request
         match session
@@ -135,6 +135,7 @@ async fn try_agent_auth(
                 partial_success,
             }) => {
                 if !partial_success {
+                    debug!("partial success false");
                     continue;
                 }
                 debug!("partial success true");
