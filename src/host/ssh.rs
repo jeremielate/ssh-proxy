@@ -122,7 +122,10 @@ async fn try_agent_auth(
     let identities = agent.request_identities().await?;
 
     for pubkey in identities {
-        debug!("Trying SSH agent key {}", pubkey.fingerprint(Default::default()));
+        debug!(
+            "Trying SSH agent key {}",
+            pubkey.fingerprint(Default::default())
+        );
         // For agent auth, we need to use authenticate_publickey_with which uses the agent
         // to sign the authentication request
         match session
@@ -135,10 +138,8 @@ async fn try_agent_auth(
                 partial_success,
             }) => {
                 if !partial_success {
-                    debug!("partial success false");
                     continue;
                 }
-                debug!("partial success true");
                 for method in remaining_methods.into_iter() {
                     if matches!(method, MethodKind::KeyboardInteractive) {
                         debug!("begin keyboard interactive");
@@ -151,13 +152,10 @@ async fn try_agent_auth(
                                 return Ok(true);
                             }
                             client::KeyboardInteractiveAuthResponse::InfoRequest {
-                                name,
-                                instructions,
                                 prompts,
+                                ..
                             } => {
-                                debug!(
-                                    "keyboard interactive name={name} instructions={instructions}"
-                                );
+                                debug!("keyboard interactive info request");
                                 let responses = prompts
                                     .into_iter()
                                     .map(|prompt| {
@@ -178,9 +176,20 @@ async fn try_agent_auth(
                                     .authenticate_keyboard_interactive_respond(responses)
                                     .await
                                     .context("cannot respond keyboard interactive")?;
-                                if matches!(keyb_response, KeyboardInteractiveAuthResponse::Success)
-                                {
-                                    return Ok(true);
+                                match keyb_response {
+                                    KeyboardInteractiveAuthResponse::Success => {
+                                        return Ok(true);
+                                    }
+                                    KeyboardInteractiveAuthResponse::InfoRequest { .. } => {
+                                        debug!("info request again !");
+                                    }
+                                    KeyboardInteractiveAuthResponse::Failure {
+                                        partial_success,
+                                        ..
+                                    } => {
+                                        debug!("failure again ! partial_success={partial_success}");
+                                        continue;
+                                    }
                                 }
                             }
                             client::KeyboardInteractiveAuthResponse::Failure { .. } => {
