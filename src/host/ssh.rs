@@ -137,8 +137,10 @@ async fn try_agent_auth(
                 if !partial_success {
                     continue;
                 }
-                for method in remaining_methods.iter() {
-                    if *method == MethodKind::KeyboardInteractive {
+                debug!("partial success true");
+                for method in remaining_methods.into_iter() {
+                    if matches!(method, MethodKind::KeyboardInteractive) {
+                        debug!("begin keyboard interactive");
                         let keyb_response = session
                             .authenticate_keyboard_interactive_start(user, None)
                             .await
@@ -317,9 +319,7 @@ impl AsyncWrite for ChannelWriter {
         let mut fut = Box::pin(fut);
         match fut.as_mut().poll(cx) {
             std::task::Poll::Ready(Ok(n)) => std::task::Poll::Ready(Ok(n)),
-            std::task::Poll::Ready(Err(e)) => {
-                std::task::Poll::Ready(Err(std::io::Error::other(e)))
-            }
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(std::io::Error::other(e))),
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
@@ -349,9 +349,7 @@ impl AsyncWrite for ChannelWriter {
         let mut fut = Box::pin(fut);
         match fut.as_mut().poll(cx) {
             std::task::Poll::Ready(Ok(_)) => std::task::Poll::Ready(Ok(())),
-            std::task::Poll::Ready(Err(e)) => {
-                std::task::Poll::Ready(Err(std::io::Error::other(e)))
-            }
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(std::io::Error::other(e))),
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
