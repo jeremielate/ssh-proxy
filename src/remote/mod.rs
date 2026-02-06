@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{BufReader, BufWriter, stdin, stdout};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, warn};
 
 /// Run the remote proxy
@@ -33,7 +33,7 @@ struct TcpConnectionHandle {
     tx: mpsc::Sender<Vec<u8>>,
 }
 
-impl<R, W> RemoteProxy<R, W>
+impl<R, W> RemoteProxy<Arc<Mutex<R>>, Mutex<W>>
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -41,8 +41,8 @@ where
     fn new(reader: R, writer: W) -> Self {
         let (response_tx, response_rx) = mpsc::channel(1024);
         Self {
-            reader,
-            writer,
+            reader: Arc::new(Mutex::new(reader)),
+            writer: Mutex::new(writer),
             tcp_connections: Arc::new(DashMap::new()),
             response_tx,
             response_rx,
@@ -55,24 +55,48 @@ where
         write_message(&mut self.writer, &RemoteMessage::Ready).await?;
         info!("Remote proxy ready");
 
+        let (read_message_tx, mut read_message_rx) = mpsc::channel(1024);
+
+        let task_reader = Arc::clone(&self.reader);
+        tokio::spawn(async move {
+            loop {
+                let msg = read_message::<_, HostMessage>(task_reader.clone()).await;
+                let break_loop = match msg {
+                    Ok(None) | Err(_) => true,
+                    _ => false,
+                };
+                if let Err(e) = read_message_tx.send(msg).await {
+                    debug!("read message hang up: {}", e);
+                    break;
+                };
+                if break_loop {
+                    break;
+                }
+            }
+        });
+
         loop {
             tokio::select! {
                 // Handle incoming messages from host
-                msg = read_message::<_, HostMessage>(&mut self.reader) => {
-                    match msg {
-                        Ok(Some(msg)) => {
-                            if let Err(e) = self.handle_host_message(msg).await {
-                                error!("Error handling host message: {}", e);
+                msg = read_message_rx.recv() => {
+                    if let Some(msg) = msg {
+                        match msg {
+                            Ok(Some(msg)) => {
+                                if let Err(e) = self.handle_host_message(msg).await {
+                                    error!("Error handling host message: {}", e);
+                                }
+                            }
+                            Ok(None) => {
+                                info!("Host disconnected");
+                                break;
+                            }
+                            Err(e) => {
+                                error!("Error reading host message: {}", e);
+                                break;
                             }
                         }
-                        Ok(None) => {
-                            info!("Host disconnected");
-                            break;
-                        }
-                        Err(e) => {
-                            error!("Error reading host message: {}", e);
-                            break;
-                        }
+                    } else {
+                        break;
                     }
                 }
 

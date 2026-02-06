@@ -4,7 +4,9 @@ mod ssh;
 mod tun;
 
 use crate::cli::{HostArgs, parse_cidr, parse_remote};
-use crate::packet::{ParsedPacket, TcpFlags, TcpPacketInfo, UdpPacketInfo, build_tcp_packet, parse_ip_packet};
+use crate::packet::{
+    ParsedPacket, TcpFlags, TcpPacketInfo, UdpPacketInfo, build_tcp_packet, parse_ip_packet,
+};
 use crate::protocol::{HostMessage, RemoteMessage, read_message, write_message};
 
 use std::net::Ipv4Addr;
@@ -13,7 +15,7 @@ use std::sync::Arc;
 use nat::{ConnectionState, NatTable};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::signal::ctrl_c;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, warn};
 
 /// Run the host mode
@@ -60,7 +62,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
 
     // Run the main proxy loop
-    let result = run_proxy_loop(tun_device, ssh_reader, ssh_writer).await;
+    let result = run_proxy_loop(
+        tun_device,
+        Arc::new(Mutex::new(ssh_reader)),
+        Mutex::new(ssh_writer),
+    )
+    .await;
 
     // Cleanup routes
     for (subnet_ip, prefix) in &subnets {
@@ -74,15 +81,15 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
 async fn run_proxy_loop<R, W>(
     mut tun_device: tun::AsyncTunDevice,
-    mut ssh_reader: R,
-    mut ssh_writer: W,
+    ssh_reader: Arc<Mutex<R>>,
+    mut ssh_writer: Mutex<W>,
 ) -> anyhow::Result<()>
 where
-    R: AsyncRead + Unpin + Send,
+    R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send,
 {
     // Wait for remote to be ready
-    match read_message::<_, RemoteMessage>(&mut ssh_reader).await? {
+    match read_message::<_, RemoteMessage>(Arc::clone(&ssh_reader)).await? {
         Some(RemoteMessage::Ready) => {
             info!("Remote proxy ready");
         }
@@ -103,6 +110,25 @@ where
     let (to_tun_tx, mut to_tun_rx) = mpsc::channel::<Vec<u8>>(1024);
 
     let mut tun_buf = vec![0u8; 65536];
+
+    let (read_message_tx, mut read_message_rx) = mpsc::channel(1024);
+    let task_reader = Arc::clone(&ssh_reader);
+    tokio::spawn(async move {
+        loop {
+            let msg = read_message::<_, RemoteMessage>(task_reader.clone()).await;
+            let break_loop = match msg {
+                Ok(None) | Err(_) => true,
+                _ => false,
+            };
+            if let Err(e) = read_message_tx.send(msg).await {
+                debug!("read message hang up: {}", e);
+                break;
+            };
+            if break_loop {
+                break;
+            }
+        }
+    });
 
     loop {
         tokio::select! {
@@ -128,25 +154,29 @@ where
             }
 
             // Read messages from remote
-            result = read_message::<_, RemoteMessage>(&mut ssh_reader) => {
-                match result {
-                    Ok(Some(msg)) => {
-                        if let Err(e) = handle_remote_message(
-                            msg,
-                            &nat_table,
-                            &to_tun_tx,
-                        ).await {
-                            debug!("Error handling remote message: {}", e);
+            result = read_message_rx.recv() => {
+                if let Some(result) = result {
+                    match result {
+                        Ok(Some(msg)) => {
+                            if let Err(e) = handle_remote_message(
+                                msg,
+                                &nat_table,
+                                &to_tun_tx,
+                            ).await {
+                                debug!("Error handling remote message: {}", e);
+                            }
+                        }
+                        Ok(None) => {
+                            info!("Remote disconnected");
+                            break;
+                        }
+                        Err(e) => {
+                            error!("SSH read error: {}", e);
+                            break;
                         }
                     }
-                    Ok(None) => {
-                        info!("Remote disconnected");
-                        break;
-                    }
-                    Err(e) => {
-                        error!("SSH read error: {}", e);
-                        break;
-                    }
+                } else {
+                    break;
                 }
             }
 
@@ -301,10 +331,7 @@ async fn handle_outbound_tcp(
             } else if !tcp.payload.is_empty() {
                 // Normal data
                 debug!("TCP data: id={}, len={}", conn_id, tcp.payload.len());
-                nat_table.update_tcp_ack(
-                    conn_id,
-                    tcp.seq.wrapping_add(tcp.payload.len() as u32),
-                );
+                nat_table.update_tcp_ack(conn_id, tcp.seq.wrapping_add(tcp.payload.len() as u32));
                 to_remote_tx
                     .send(HostMessage::TcpData {
                         id: conn_id,
@@ -360,10 +387,7 @@ async fn handle_outbound_tcp(
         }
 
         _ => {
-            debug!(
-                "TCP packet in unexpected state {:?}: id={}",
-                state, conn_id
-            );
+            debug!("TCP packet in unexpected state {:?}: id={}", state, conn_id);
         }
     }
 
@@ -506,10 +530,7 @@ async fn handle_remote_message(
                     }
                     _ => {
                         // Already closing or unexpected state, just clean up
-                        debug!(
-                            "TcpClosed in unexpected state {:?}: id={}",
-                            state, id
-                        );
+                        debug!("TcpClosed in unexpected state {:?}: id={}", state, id);
                         nat_table.close_tcp_connection(&key);
                     }
                 }

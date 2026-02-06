@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::sync::Mutex;
 use tracing::debug;
 
 /// Messages sent from host to remote
@@ -91,28 +93,32 @@ pub enum RemoteMessage {
 }
 
 /// Read a length-prefixed message from an async reader
-pub async fn read_message<R, T>(reader: &mut R) -> anyhow::Result<Option<T>>
+pub async fn read_message<R, T>(reader: Arc<Mutex<R>>) -> anyhow::Result<Option<T>>
 where
     R: AsyncRead + Unpin,
     T: for<'de> Deserialize<'de>,
 {
-    // Read 4-byte length prefix
-    let mut len_buf = [0u8; 4];
-    match reader.read_exact(&mut len_buf).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e.into()),
-    }
-    let len = u32::from_be_bytes(len_buf) as usize;
+    let buf = {
+        // Read 4-byte length prefix
+        let mut len_buf = [0u8; 4];
+        let mut reader = reader.lock().await;
+        match reader.read_exact(&mut len_buf).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
+        let len = u32::from_be_bytes(len_buf) as usize;
 
-    if len > 16 * 1024 * 1024 {
-        anyhow::bail!("Message too large: {} bytes", len);
-    }
+        if len > 16 * 1024 * 1024 {
+            anyhow::bail!("Message too large: {} bytes", len);
+        }
 
-    // Read message body
-    debug!("reading message len={len}");
-    let mut buf = vec![0u8; len];
-    reader.read_exact(&mut buf).await?;
+        // Read message body
+        debug!("reading message len={len}");
+        let mut buf = vec![0u8; len];
+        reader.read_exact(&mut buf).await?;
+        buf
+    };
 
     // Deserialize
     let msg: T = postcard::from_bytes(&buf)?;
@@ -120,22 +126,18 @@ where
 }
 
 /// Write a length-prefixed message to an async writer
-pub async fn write_message<W, T>(mut writer: W, msg: &T) -> anyhow::Result<()>
+pub async fn write_message<W, T>(writer: &mut Mutex<W>, msg: &T) -> anyhow::Result<()>
 where
     W: AsyncWrite + Unpin,
     T: Serialize,
 {
-    let whole_buf = {
-        let mut data: Vec<u8> = postcard::to_allocvec(msg)?;
-        let len = data.len() as u32;
-        debug!("writing message len={len}");
+    let data: Vec<u8> = postcard::to_allocvec(msg)?;
+    let len = data.len() as u32;
+    debug!("writing message len={len}");
 
-        let mut whole_buf = len.to_be_bytes().to_vec();
-        whole_buf.append(&mut data);
-        whole_buf
-    };
-
-    writer.write_all(&whole_buf).await?;
+    let mut writer = writer.lock().await;
+    let _ = writer.write_all(&len.to_be_bytes()).await;
+    let _ = writer.write_all(&data).await?;
     writer.flush().await?;
 
     Ok(())
