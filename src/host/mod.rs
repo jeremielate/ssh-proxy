@@ -13,7 +13,7 @@ use std::sync::Arc;
 use nat::{ConnectionState, NatTable};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::signal::ctrl_c;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, warn};
 
 /// Run the host mode

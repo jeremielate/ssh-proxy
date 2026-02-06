@@ -2,9 +2,8 @@ use anyhow::Context;
 use inquire::{Password, Text};
 use russh::client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse, Msg};
 use russh::keys::agent::client::AgentClient;
-use russh::keys::{PrivateKeyWithHashAlg, load_secret_key};
+use russh::keys::{PrivateKeyWithHashAlg, check_known_hosts, load_secret_key};
 use russh::{Channel, ChannelMsg, ChannelWriteHalf, MethodKind};
-use std::future::ready;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -19,16 +18,20 @@ pub struct SshConfig {
     pub remote_binary: String,
 }
 
-struct SshHandler;
+struct SshHandler {
+    host: String,
+    port: u16,
+}
 
 impl Handler for SshHandler {
     type Error = anyhow::Error;
 
-    fn check_server_key(
+    async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::ssh_key::PublicKey,
-    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
-        ready(Ok(true))
+        server_public_key: &russh::keys::ssh_key::PublicKey,
+    ) -> Result<bool, Self::Error> {
+            check_known_hosts(&self.host, self.port, server_public_key)
+                .context("{self.host}:{self.port} known hosts error")
     }
 }
 
@@ -40,13 +43,15 @@ pub async fn connect(
     impl AsyncRead + Unpin + Send,
     impl AsyncWrite + Unpin + Send,
 )> {
-    let ssh_config = client::Config::default();
-    let ssh_config = Arc::new(ssh_config);
-
-    let handler = SshHandler;
+    let ssh_config = Arc::new(client::Config::default());
 
     let addr = format!("{}:{}", config.host, config.port);
     info!("Connecting to SSH server at {}", addr);
+
+    let handler = SshHandler {
+        host: config.host.clone(),
+        port: config.port,
+    };
 
     let mut session = client::connect(ssh_config, &addr, handler)
         .await
@@ -173,11 +178,11 @@ async fn try_agent_auth(
                 }
                 for method in remaining_methods.into_iter() {
                     if matches!(method, MethodKind::KeyboardInteractive) {
-                        debug!("begin keyboard interactive");
+                        debug!("Begin keyboard interactive");
                         let mut keyb_response = session
                             .authenticate_keyboard_interactive_start(user, None)
                             .await
-                            .context("cannot start keyboard interactive")?;
+                            .context("Cannot start keyboard interactive")?;
                         loop {
                             match keyb_response {
                                 client::KeyboardInteractiveAuthResponse::Success => {

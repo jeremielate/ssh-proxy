@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use tracing::debug;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Messages sent from host to remote
@@ -122,7 +124,7 @@ where
 }
 
 /// Write a length-prefixed message to an async writer
-pub async fn write_message<W, T>(writer: &mut W, msg: &T) -> anyhow::Result<()>
+pub async fn write_message<W, T>(mut writer: W, msg: &T) -> anyhow::Result<()>
 where
     W: AsyncWrite + Unpin,
     T: Serialize,

@@ -1,12 +1,12 @@
 mod proxy;
 
-use crate::protocol::{read_message, write_message, HostMessage, RemoteMessage};
+use crate::protocol::{HostMessage, RemoteMessage, read_message, write_message};
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::io::{stdin, stdout, BufReader, BufWriter};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::io::{BufReader, BufWriter, stdin, stdout};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, warn};
 
 /// Run the remote proxy
@@ -97,8 +97,15 @@ where
 
     async fn handle_host_message(&mut self, msg: HostMessage) -> anyhow::Result<()> {
         match msg {
-            HostMessage::TcpConnect { id, dst_ip, dst_port } => {
-                debug!("TCP connect request: id={}, dst={}:{}", id, dst_ip, dst_port);
+            HostMessage::TcpConnect {
+                id,
+                dst_ip,
+                dst_port,
+            } => {
+                debug!(
+                    "TCP connect request: id={}, dst={}:{}",
+                    id, dst_ip, dst_port
+                );
                 self.handle_tcp_connect(id, dst_ip, dst_port).await;
             }
             HostMessage::TcpData { id, data } => {
@@ -109,9 +116,21 @@ where
                 debug!("TCP close: id={}", id);
                 self.handle_tcp_close(id).await;
             }
-            HostMessage::UdpDatagram { src_port, dst_ip, dst_port, data } => {
-                debug!("UDP datagram: src_port={}, dst={}:{}, len={}", src_port, dst_ip, dst_port, data.len());
-                self.handle_udp_datagram(src_port, dst_ip, dst_port, data).await;
+            HostMessage::UdpDatagram {
+                src_port,
+                dst_ip,
+                dst_port,
+                data,
+            } => {
+                debug!(
+                    "UDP datagram: src_port={}, dst={}:{}, len={}",
+                    src_port,
+                    dst_ip,
+                    dst_port,
+                    data.len()
+                );
+                self.handle_udp_datagram(src_port, dst_ip, dst_port, data)
+                    .await;
             }
             HostMessage::Shutdown => {
                 info!("Shutdown requested");
@@ -140,7 +159,8 @@ where
                     connections.insert(id, TcpConnectionHandle { tx });
 
                     // Handle the connection
-                    proxy::handle_tcp_connection(id, stream, rx, response_tx.clone(), running).await;
+                    proxy::handle_tcp_connection(id, stream, rx, response_tx.clone(), running)
+                        .await;
 
                     // Remove connection when done
                     connections.remove(&id);
