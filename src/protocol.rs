@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 use std::net::Ipv4Addr;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tracing::debug;
 
 /// Messages sent from host to remote
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,9 +87,7 @@ pub enum RemoteMessage {
     /// Remote ready
     Ready,
     /// Remote error
-    Error {
-        error: String,
-    },
+    Error { error: String },
 }
 
 /// Read a length-prefixed message from an async reader
@@ -127,12 +125,17 @@ where
     W: AsyncWrite + Unpin,
     T: Serialize,
 {
-    let data: Vec<u8> = postcard::to_allocvec(msg)?;
-    let len = data.len() as u32;
-    debug!("writing message len={len}");
+    let whole_buf = {
+        let mut data: Vec<u8> = postcard::to_allocvec(msg)?;
+        let len = data.len() as u32;
+        debug!("writing message len={len}");
 
-    writer.write_all(&len.to_be_bytes()).await?;
-    writer.write_all(&data).await?;
+        let mut whole_buf = len.to_be_bytes().to_vec();
+        whole_buf.append(&mut data);
+        whole_buf
+    };
+
+    writer.write_all(&whole_buf).await?;
     writer.flush().await?;
 
     Ok(())
@@ -177,7 +180,11 @@ mod tests {
         let decoded: HostMessage = read_message(&mut cursor).await.unwrap().unwrap();
 
         match decoded {
-            HostMessage::TcpConnect { id, dst_ip, dst_port } => {
+            HostMessage::TcpConnect {
+                id,
+                dst_ip,
+                dst_port,
+            } => {
                 assert_eq!(id, 42);
                 assert_eq!(dst_ip, Ipv4Addr::new(192, 168, 1, 1));
                 assert_eq!(dst_port, 80);
