@@ -212,10 +212,10 @@ async fn handle_outbound_tcp(
 
     if tcp.flags.syn && !tcp.flags.ack {
         // New connection - SYN packet
-        let conn_id = nat_table.create_tcp_connection(key);
+        let conn_id = nat_table.create_tcp_connection(key, tcp.seq);
         debug!(
-            "New TCP connection: id={}, {}:{} -> {}:{}",
-            conn_id, tcp.src_ip, tcp.src_port, tcp.dst_ip, tcp.dst_port
+            "New TCP connection: id={}, {}:{} -> {}:{} (client ISN={})",
+            conn_id, tcp.src_ip, tcp.src_port, tcp.dst_ip, tcp.dst_port, tcp.seq
         );
 
         to_remote_tx
@@ -238,6 +238,8 @@ async fn handle_outbound_tcp(
                 .await?;
         } else if !tcp.payload.is_empty() {
             debug!("TCP data: id={}, len={}", conn_id, tcp.payload.len());
+            // Track client's sequence progress for correct ack in responses
+            nat_table.update_tcp_ack(conn_id, tcp.seq.wrapping_add(tcp.payload.len() as u32));
             to_remote_tx
                 .send(HostMessage::TcpData {
                     id: conn_id,
@@ -303,8 +305,8 @@ async fn handle_remote_message(
                     key.0, // src_ip becomes dst
                     key.3, // dst_port becomes src
                     key.1, // src_port becomes dst
-                    0,     // seq
-                    1,     // ack (acknowledging the SYN)
+                    nat_table.get_tcp_seq(id),
+                    nat_table.get_tcp_ack(id),
                     TcpFlags {
                         syn: true,
                         ack: true,
@@ -313,6 +315,8 @@ async fn handle_remote_message(
                     65535,
                     &[],
                 );
+                // SYN consumes one sequence number
+                nat_table.advance_tcp_seq_syn(id);
                 to_tun_tx.send(packet).await?;
             }
         }

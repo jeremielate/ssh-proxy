@@ -53,14 +53,14 @@ impl NatTable {
     }
 
     /// Create a new TCP connection entry and return its ID
-    pub fn create_tcp_connection(&self, key: TcpKey) -> u32 {
+    pub fn create_tcp_connection(&self, key: TcpKey, client_isn: u32) -> u32 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
         let conn = TcpConnection {
             id,
             state: ConnectionState::SynSent,
-            seq: 1000, // Initial sequence number for responses
-            ack: 1,    // Initial ack (after SYN)
+            seq: 1000,              // Our ISN for the SYN-ACK
+            ack: client_isn.wrapping_add(1), // Acknowledge the client's SYN
         };
 
         self.tcp_by_key.insert(key, conn);
@@ -117,8 +117,12 @@ impl NatTable {
             }
     }
 
+    /// Advance the TCP seq by 1 (for SYN which consumes one sequence number)
+    pub fn advance_tcp_seq_syn(&self, id: u32) {
+        self.advance_tcp_seq(id, 1);
+    }
+
     /// Update TCP ack number based on received data
-    #[allow(dead_code)]
     pub fn update_tcp_ack(&self, id: u32, ack: u32) {
         if let Some(key) = self.tcp_by_id.get(&id)
             && let Some(mut conn) = self.tcp_by_key.get_mut(key.value()) {
@@ -183,10 +187,11 @@ mod tests {
             80,
         );
 
-        // Create connection
-        let id = nat.create_tcp_connection(key);
+        // Create connection (client ISN = 5000)
+        let id = nat.create_tcp_connection(key, 5000);
         assert_eq!(nat.get_tcp_connection_id(&key), Some(id));
         assert_eq!(nat.get_tcp_connection_key(id), Some(key));
+        assert_eq!(nat.get_tcp_ack(id), 5001); // client ISN + 1
 
         // Update state
         nat.set_tcp_state(&key, ConnectionState::Established);
