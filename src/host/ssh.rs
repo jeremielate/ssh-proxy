@@ -111,6 +111,37 @@ pub async fn connect(
     Ok((reader, writer))
 }
 
+async fn keyboard_interactive_info_request(
+    session: &mut client::Handle<SshHandler>,
+    prompts: Vec<russh::client::Prompt>,
+) -> anyhow::Result<KeyboardInteractiveAuthResponse> {
+    debug!("keyboard interactive info request");
+    let responses = prompts
+        .into_iter()
+        .map(|prompt| {
+            if prompt.prompt.is_empty() {
+                Ok(String::new())
+            } else {
+                if prompt.echo {
+                    Text::new(&prompt.prompt)
+                        .prompt()
+                        .context("Failed to read response to prompt")
+                } else {
+                    Password::new(&prompt.prompt)
+                        .without_confirmation()
+                        .prompt()
+                        .context("Failed to read response to prompt")
+                }
+            }
+        })
+        .collect::<Result<Vec<String>, _>>()?;
+
+    session
+        .authenticate_keyboard_interactive_respond(responses)
+        .await
+        .context("cannot respond keyboard interactive")
+}
+
 async fn try_agent_auth(
     session: &mut client::Handle<SshHandler>,
     user: &str,
@@ -121,7 +152,7 @@ async fn try_agent_auth(
 
     let identities = agent.request_identities().await?;
 
-    for pubkey in identities {
+    'identities_loop: for pubkey in identities {
         debug!(
             "Trying SSH agent key {}",
             pubkey.fingerprint(Default::default())
@@ -143,57 +174,25 @@ async fn try_agent_auth(
                 for method in remaining_methods.into_iter() {
                     if matches!(method, MethodKind::KeyboardInteractive) {
                         debug!("begin keyboard interactive");
-                        let keyb_response = session
+                        let mut keyb_response = session
                             .authenticate_keyboard_interactive_start(user, None)
                             .await
                             .context("cannot start keyboard interactive")?;
-                        match keyb_response {
-                            client::KeyboardInteractiveAuthResponse::Success => {
-                                return Ok(true);
-                            }
-                            client::KeyboardInteractiveAuthResponse::InfoRequest {
-                                prompts,
-                                ..
-                            } => {
-                                debug!("keyboard interactive info request");
-                                let responses = prompts
-                                    .into_iter()
-                                    .map(|prompt| {
-                                        if prompt.echo {
-                                            Text::new(&prompt.prompt)
-                                                .prompt()
-                                                .context("Failed to read response to prompt")
-                                        } else {
-                                            Password::new(&prompt.prompt)
-                                                .without_confirmation()
-                                                .prompt()
-                                                .context("Failed to read response to prompt")
-                                        }
-                                    })
-                                    .collect::<Result<Vec<String>, _>>()?;
-
-                                let keyb_response = session
-                                    .authenticate_keyboard_interactive_respond(responses)
-                                    .await
-                                    .context("cannot respond keyboard interactive")?;
-                                match keyb_response {
-                                    KeyboardInteractiveAuthResponse::Success => {
-                                        return Ok(true);
-                                    }
-                                    KeyboardInteractiveAuthResponse::InfoRequest { .. } => {
-                                        debug!("info request again !");
-                                    }
-                                    KeyboardInteractiveAuthResponse::Failure {
-                                        partial_success,
-                                        ..
-                                    } => {
-                                        debug!("failure again ! partial_success={partial_success}");
-                                        continue;
-                                    }
+                        loop {
+                            match keyb_response {
+                                client::KeyboardInteractiveAuthResponse::Success => {
+                                    return Ok(true);
                                 }
-                            }
-                            client::KeyboardInteractiveAuthResponse::Failure { .. } => {
-                                continue;
+                                client::KeyboardInteractiveAuthResponse::InfoRequest {
+                                    prompts,
+                                    ..
+                                } => {
+                                    keyb_response =
+                                        keyboard_interactive_info_request(session, prompts).await?;
+                                }
+                                client::KeyboardInteractiveAuthResponse::Failure { .. } => {
+                                    continue 'identities_loop;
+                                }
                             }
                         }
                     }
