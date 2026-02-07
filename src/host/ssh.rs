@@ -30,8 +30,8 @@ impl Handler for SshHandler {
         &mut self,
         server_public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-            check_known_hosts(&self.host, self.port, server_public_key)
-                .context("{self.host}:{self.port} known hosts error")
+        check_known_hosts(&self.host, self.port, server_public_key)
+            .context("{self.host}:{self.port} known hosts error")
     }
 }
 
@@ -218,8 +218,6 @@ fn create_channel_io(channel: Channel<Msg>) -> (ChannelReader, ChannelWriter) {
     // Spawn a task to read from the channel and send data through the mpsc
     tokio::spawn(async move {
         loop {
-            info!("locking channel");
-            info!("channel locked");
             match r_channel.wait().await {
                 Some(ChannelMsg::Data { data }) => {
                     if data_tx.send(data.to_vec()).await.is_err() {
@@ -318,16 +316,11 @@ impl AsyncWrite for ChannelWriter {
         use std::future::Future;
 
         let channel = self.channel.clone();
-        let data = buf.to_vec();
-        let len = data.len();
-
         let fut = async move {
-            debug!("poll_write AsyncWrite locking channel");
+            let len = buf.len();
             let channel = channel.lock().await;
-            debug!("poll_write AsyncWrite channel locked");
-            channel.data(&data[..]).await.map(|_| len)
+            channel.data(buf).await.map(|_| len)
         };
-
         let mut fut = Box::pin(fut);
         match fut.as_mut().poll(cx) {
             std::task::Poll::Ready(Ok(n)) => std::task::Poll::Ready(Ok(n)),
@@ -352,9 +345,7 @@ impl AsyncWrite for ChannelWriter {
 
         let channel = self.channel.clone();
         let fut = async move {
-            debug!("poll_shutdown AsyncWrite locking channel");
             let channel = channel.lock().await;
-            debug!("poll_shutdown AsyncWrite channel locked");
             channel.eof().await
         };
 

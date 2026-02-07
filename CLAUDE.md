@@ -14,13 +14,13 @@ cargo check              # Fast type checking
 
 ## Architecture
 
-This is an SSH tunnel proxy that routes traffic through a remote server. It's a **single binary** with two modes:
+This is an SSH tunnel proxy that routes traffic through a remote server. It supports both **IPv4 and IPv6**. It's a **single binary** with two modes:
 
 ### Two-Mode Design
 
 1. **Host mode** (`ssh-proxy host`): Runs on your local machine
    - Creates a TUN interface to capture network traffic
-   - Parses IP packets and extracts TCP/UDP data
+   - Parses IPv4/IPv6 packets and extracts TCP/UDP data
    - Maintains NAT table for connection tracking
    - Connects via SSH and executes the remote binary
 
@@ -37,7 +37,7 @@ App → TUN → Host (parse packets, NAT) → SSH stdin/stdout → Remote (proxy
 
 ### Wire Protocol
 
-Host and remote communicate using length-prefixed bincode messages over SSH stdin/stdout:
+Host and remote communicate using length-prefixed postcard messages over SSH stdin/stdout. All IP addresses use `IpAddr` (dual-stack):
 - `HostMessage`: TcpConnect, TcpData, TcpClose, UdpDatagram, Shutdown
 - `RemoteMessage`: TcpConnected, TcpData, TcpClosed, TcpError, UdpResponse, Ready
 
@@ -46,7 +46,7 @@ Host and remote communicate using length-prefixed bincode messages over SSH stdi
 - `src/host/` - Host mode: SSH client, TUN device, routing, NAT table
 - `src/remote/` - Remote mode: proxy engine for TCP/UDP
 - `src/protocol.rs` - Message types and serialization
-- `src/packet.rs` - IP/TCP/UDP packet parsing with etherparse
+- `src/packet.rs` - IPv4/IPv6 packet parsing and building with etherparse
 
 ### Platform Constraints
 
@@ -62,5 +62,5 @@ Linux-specific dependencies (`tun`, `rtnetlink`) are conditionally compiled with
 scp target/release/ssh-proxy user@server:/usr/local/bin/
 
 # On host (Linux, requires sudo for TUN)
-sudo ./ssh-proxy host --remote user@server --subnets 192.168.1.0/24
+sudo ./ssh-proxy host --remote user@server --subnets 192.168.1.0/24,fd00::/64
 ```

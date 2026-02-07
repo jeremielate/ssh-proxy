@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     let filter = if matches!(&cli.command, Command::Host(args) if args.verbose) {
         EnvFilter::new("debug")
     } else {
-        EnvFilter::from_default_env().add_directive("ssh_proxy=debug".parse()?)
+        EnvFilter::from_default_env().add_directive("ssh_proxy=info".parse()?)
     };
 
     match cli.command {
