@@ -1,14 +1,14 @@
 use dashmap::DashMap;
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 /// Key for TCP connection: (src_ip, src_port, dst_ip, dst_port)
-pub type TcpKey = (Ipv4Addr, u16, Ipv4Addr, u16);
+pub type TcpKey = (IpAddr, u16, IpAddr, u16);
 
 /// Key for UDP "connection": (src_ip, src_port, dst_ip, dst_port)
 #[allow(dead_code)]
-pub type UdpKey = (Ipv4Addr, u16, Ipv4Addr, u16);
+pub type UdpKey = (IpAddr, u16, IpAddr, u16);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
@@ -30,7 +30,7 @@ struct TcpConnection {
 }
 
 struct UdpMapping {
-    src_ip: Ipv4Addr,
+    src_ip: IpAddr,
     last_activity: Instant,
 }
 
@@ -40,7 +40,7 @@ pub struct NatTable {
     /// TCP connections indexed by connection ID (for reverse lookup)
     tcp_by_id: DashMap<u32, TcpKey>,
     /// UDP mappings indexed by (src_port, dst_ip, dst_port) for return path
-    udp_mappings: DashMap<(u16, Ipv4Addr, u16), UdpMapping>,
+    udp_mappings: DashMap<(u16, IpAddr, u16), UdpMapping>,
     /// Next connection ID
     next_id: AtomicU32,
 }
@@ -139,7 +139,7 @@ impl NatTable {
     }
 
     /// Track a UDP packet for return path routing
-    pub fn track_udp(&self, src_ip: Ipv4Addr, src_port: u16, dst_ip: Ipv4Addr, dst_port: u16) {
+    pub fn track_udp(&self, src_ip: IpAddr, src_port: u16, dst_ip: IpAddr, dst_port: u16) {
         let key = (src_port, dst_ip, dst_port);
         self.udp_mappings.insert(
             key,
@@ -157,9 +157,9 @@ impl NatTable {
     pub fn get_udp_src_ip(
         &self,
         dst_port: u16,
-        src_ip: Ipv4Addr,
+        src_ip: IpAddr,
         src_port: u16,
-    ) -> Option<Ipv4Addr> {
+    ) -> Option<IpAddr> {
         let key = (dst_port, src_ip, src_port);
         self.udp_mappings.get(&key).map(|m| m.src_ip)
     }
@@ -184,14 +184,15 @@ impl Default for NatTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn test_tcp_connection_lifecycle() {
         let nat = NatTable::new();
         let key = (
-            Ipv4Addr::new(10, 0, 0, 1),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
             12345,
-            Ipv4Addr::new(192, 168, 1, 1),
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
             80,
         );
 
@@ -216,14 +217,26 @@ mod tests {
 
         // Track outgoing UDP
         nat.track_udp(
-            Ipv4Addr::new(10, 0, 0, 1),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
             54321,
-            Ipv4Addr::new(8, 8, 8, 8),
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
             53,
         );
 
         // Look up return path
-        let src_ip = nat.get_udp_src_ip(54321, Ipv4Addr::new(8, 8, 8, 8), 53);
-        assert_eq!(src_ip, Some(Ipv4Addr::new(10, 0, 0, 1)));
+        let src_ip = nat.get_udp_src_ip(54321, IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 53);
+        assert_eq!(src_ip, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+    }
+
+    #[test]
+    fn test_udp_tracking_ipv6() {
+        let nat = NatTable::new();
+        let src = IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1));
+        let dst = IpAddr::V6(Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888));
+
+        nat.track_udp(src, 54321, dst, 53);
+
+        let result = nat.get_udp_src_ip(54321, dst, 53);
+        assert_eq!(result, Some(src));
     }
 }

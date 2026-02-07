@@ -1,5 +1,5 @@
 use crate::protocol::RemoteMessage;
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -84,16 +84,20 @@ pub async fn handle_tcp_connection(
 
 /// Send a UDP datagram and wait for responses
 pub async fn send_udp_datagram(
-    dst_ip: Ipv4Addr,
+    dst_ip: IpAddr,
     dst_port: u16,
     data: &[u8],
-) -> anyhow::Result<Vec<(Ipv4Addr, u16, Vec<u8>)>> {
-    // Bind to any available port
-    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+) -> anyhow::Result<Vec<(IpAddr, u16, Vec<u8>)>> {
+    // Bind to any available port, matching the address family
+    let bind_addr = match dst_ip {
+        IpAddr::V4(_) => "0.0.0.0:0",
+        IpAddr::V6(_) => "[::]:0",
+    };
+    let socket = UdpSocket::bind(bind_addr).await?;
 
     // Send datagram
-    let dst_addr = format!("{}:{}", dst_ip, dst_port);
-    socket.send_to(data, &dst_addr).await?;
+    let dst_addr = std::net::SocketAddr::new(dst_ip, dst_port);
+    socket.send_to(data, dst_addr).await?;
 
     // Wait for response(s) with timeout
     let mut responses = Vec::new();
@@ -108,13 +112,11 @@ pub async fn send_udp_datagram(
             result = socket.recv_from(&mut buf) => {
                 match result {
                     Ok((len, addr)) => {
-                        if let std::net::SocketAddr::V4(v4_addr) = addr {
-                            responses.push((
-                                *v4_addr.ip(),
-                                v4_addr.port(),
-                                buf[..len].to_vec(),
-                            ));
-                        }
+                        responses.push((
+                            addr.ip(),
+                            addr.port(),
+                            buf[..len].to_vec(),
+                        ));
                         // For most UDP protocols, one response is enough
                         // For DNS, the response is complete in one packet
                         break;

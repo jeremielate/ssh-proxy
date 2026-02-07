@@ -9,7 +9,7 @@ use crate::packet::{
 };
 use crate::protocol::{HostMessage, RemoteMessage, read_message, write_message};
 
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use nat::{ConnectionState, NatTable};
@@ -29,7 +29,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     info!("TUN interface: {}", args.tun_name);
 
     // Parse subnets to route
-    let subnets: Vec<(Ipv4Addr, u8)> = args
+    let subnets: Vec<(IpAddr, u8)> = args
         .subnets
         .iter()
         .map(|s| parse_cidr(s))

@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -50,7 +50,7 @@ pub struct HostArgs {
 
     /// DNS server to use for the tunnel
     #[arg(long)]
-    pub dns: Option<Ipv4Addr>,
+    pub dns: Option<IpAddr>,
 
     /// Enable verbose logging
     #[arg(short, long)]
@@ -74,18 +74,23 @@ pub fn parse_remote(remote: &str) -> anyhow::Result<(String, u16)> {
     }
 }
 
-/// Parse a CIDR notation string like "192.168.1.0/24"
-pub fn parse_cidr(cidr: &str) -> anyhow::Result<(Ipv4Addr, u8)> {
+/// Parse a CIDR notation string like "192.168.1.0/24" or "fd00::/64"
+pub fn parse_cidr(cidr: &str) -> anyhow::Result<(IpAddr, u8)> {
     let parts: Vec<&str> = cidr.split('/').collect();
     if parts.len() != 2 {
-        anyhow::bail!("Invalid CIDR format. Expected x.x.x.x/prefix");
+        anyhow::bail!("Invalid CIDR format. Expected address/prefix");
     }
 
-    let ip: Ipv4Addr = parts[0].parse()?;
+    let ip: IpAddr = parts[0].parse()?;
     let prefix: u8 = parts[1].parse()?;
 
-    if prefix > 32 {
-        anyhow::bail!("Invalid prefix length: {}", prefix);
+    let max_prefix = match ip {
+        IpAddr::V4(_) => 32,
+        IpAddr::V6(_) => 128,
+    };
+
+    if prefix > max_prefix {
+        anyhow::bail!("Invalid prefix length: {} (max {} for {:?})", prefix, max_prefix, ip);
     }
 
     Ok((ip, prefix))
@@ -94,6 +99,7 @@ pub fn parse_cidr(cidr: &str) -> anyhow::Result<(Ipv4Addr, u8)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn test_parse_remote() {
@@ -107,13 +113,30 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_cidr() {
+    fn test_parse_cidr_ipv4() {
         let (ip, prefix) = parse_cidr("192.168.1.0/24").unwrap();
-        assert_eq!(ip, Ipv4Addr::new(192, 168, 1, 0));
+        assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 0)));
         assert_eq!(prefix, 24);
 
         let (ip, prefix) = parse_cidr("10.0.0.0/8").unwrap();
-        assert_eq!(ip, Ipv4Addr::new(10, 0, 0, 0));
+        assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0)));
         assert_eq!(prefix, 8);
+    }
+
+    #[test]
+    fn test_parse_cidr_ipv6() {
+        let (ip, prefix) = parse_cidr("fd00::/64").unwrap();
+        assert_eq!(ip, IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0)));
+        assert_eq!(prefix, 64);
+
+        let (ip, prefix) = parse_cidr("2001:db8::/32").unwrap();
+        assert_eq!(ip, IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0)));
+        assert_eq!(prefix, 32);
+    }
+
+    #[test]
+    fn test_parse_cidr_invalid_prefix() {
+        assert!(parse_cidr("192.168.1.0/33").is_err());
+        assert!(parse_cidr("fd00::/129").is_err());
     }
 }

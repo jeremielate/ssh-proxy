@@ -168,13 +168,13 @@ where
         Ok(())
     }
 
-    async fn handle_tcp_connect(&self, id: u32, dst_ip: std::net::Ipv4Addr, dst_port: u16) {
+    async fn handle_tcp_connect(&self, id: u32, dst_ip: std::net::IpAddr, dst_port: u16) {
         let response_tx = self.response_tx.clone();
         let connections = self.tcp_connections.clone();
         let running = self.running.clone();
 
         tokio::spawn(async move {
-            let addr = format!("{}:{}", dst_ip, dst_port);
+            let addr = std::net::SocketAddr::new(dst_ip, dst_port);
             match TcpStream::connect(&addr).await {
                 Ok(stream) => {
                     debug!("TCP connected: id={}, addr={}", id, addr);
@@ -227,7 +227,7 @@ where
     async fn handle_udp_datagram(
         &self,
         src_port: u16,
-        dst_ip: std::net::Ipv4Addr,
+        dst_ip: std::net::IpAddr,
         dst_port: u16,
         data: Vec<u8>,
     ) {

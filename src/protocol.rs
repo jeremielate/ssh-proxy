@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ pub enum HostMessage {
         /// Connection ID for tracking
         id: u32,
         /// Destination IP address
-        dst_ip: Ipv4Addr,
+        dst_ip: IpAddr,
         /// Destination port
         dst_port: u16,
     },
@@ -35,7 +35,7 @@ pub enum HostMessage {
         /// Source port (for return routing)
         src_port: u16,
         /// Destination IP address
-        dst_ip: Ipv4Addr,
+        dst_ip: IpAddr,
         /// Destination port
         dst_port: u16,
         /// Datagram payload
@@ -77,7 +77,7 @@ pub enum RemoteMessage {
         /// Destination port on host (original src_port)
         dst_port: u16,
         /// Source IP of the response
-        src_ip: Ipv4Addr,
+        src_ip: IpAddr,
         /// Source port of the response
         src_port: u16,
         /// Response payload
@@ -144,12 +144,13 @@ where
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use std::net::Ipv4Addr;
 
     #[tokio::test]
     async fn test_message_roundtrip() {
         let msg = HostMessage::TcpConnect {
             id: 42,
-            dst_ip: Ipv4Addr::new(192, 168, 1, 1),
+            dst_ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
             dst_port: 80,
         };
 
@@ -167,7 +168,7 @@ mod tests {
                 dst_port,
             } => {
                 assert_eq!(id, 42);
-                assert_eq!(dst_ip, Ipv4Addr::new(192, 168, 1, 1));
+                assert_eq!(dst_ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
                 assert_eq!(dst_port, 80);
             }
             _ => panic!("Wrong message type"),
