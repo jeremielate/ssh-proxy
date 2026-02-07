@@ -55,6 +55,9 @@ fn get_destination_and_interface_attributes(msg: &RouteMessage) -> Option<(&Rout
     }
 }
 
+// No need to remove routes when a tun device is dropped, maybe this function will serve in the
+// future
+#[allow(dead_code)]
 pub async fn remove_route(tun_name: &str, subnet: Ipv4Addr, prefix: u8) -> anyhow::Result<()> {
     let (connection, handle, _) = new_connection()?;
     tokio::spawn(connection);

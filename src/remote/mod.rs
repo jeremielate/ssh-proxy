@@ -58,6 +58,7 @@ where
         let (read_message_tx, mut read_message_rx) = mpsc::channel(1024);
 
         let self_reader = Arc::clone(&self.reader);
+        let self_running = Arc::clone(&self.running);
         tokio::spawn(async move {
             loop {
                 let msg = read_message::<_, HostMessage>(self_reader.clone()).await;
@@ -70,6 +71,9 @@ where
                     break;
                 };
                 if break_loop {
+                    break;
+                }
+                if !self_running.load(Ordering::Relaxed) {
                     break;
                 }
             }

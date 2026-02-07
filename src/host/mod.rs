@@ -62,21 +62,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
 
     // Run the main proxy loop
-    let result = run_proxy_loop(
+    run_proxy_loop(
         tun_device,
         Arc::new(Mutex::new(ssh_reader)),
         Mutex::new(ssh_writer),
     )
-    .await;
-
-    // Cleanup routes
-    for (subnet_ip, prefix) in &subnets {
-        if let Err(e) = routing::remove_route(&args.tun_name, *subnet_ip, *prefix).await {
-            warn!("Failed to remove route {}/{}: {}", subnet_ip, prefix, e);
-        }
-    }
-
-    result
+    .await
 }
 
 async fn run_proxy_loop<R, W>(
@@ -112,20 +103,19 @@ where
     let mut tun_buf = vec![0u8; 65536];
 
     let (read_message_tx, mut read_message_rx) = mpsc::channel(1024);
-    let task_reader = Arc::clone(&ssh_reader);
     tokio::spawn(async move {
         loop {
-            let msg = read_message::<_, RemoteMessage>(task_reader.clone()).await;
+            let msg = read_message::<_, RemoteMessage>(Arc::clone(&ssh_reader)).await;
             let break_loop = match msg {
                 Ok(None) | Err(_) => true,
                 _ => false,
             };
             if let Err(e) = read_message_tx.send(msg).await {
-                debug!("read message hang up: {}", e);
-                break;
+                debug!("read message receiver dropped: {}", e);
+                return;
             };
             if break_loop {
-                break;
+                return;
             }
         }
     });
