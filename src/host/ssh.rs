@@ -3,11 +3,10 @@ use inquire::{Password, Text};
 use russh::client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse, Msg};
 use russh::keys::agent::client::AgentClient;
 use russh::keys::{PrivateKeyWithHashAlg, check_known_hosts, load_secret_key};
-use russh::{Channel, ChannelMsg, ChannelWriteHalf, MethodKind};
+use russh::{Channel, MethodKind};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::mpsc;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, info};
 
 pub struct SshConfig {
@@ -211,149 +210,12 @@ async fn try_agent_auth(
     Ok(false)
 }
 
-fn create_channel_io(channel: Channel<Msg>) -> (ChannelReader, ChannelWriter) {
-    let (data_tx, data_rx) = mpsc::channel::<Vec<u8>>(256);
-    let (mut r_channel, w_channel) = channel.split();
-
-    // Spawn a task to read from the channel and send data through the mpsc
-    tokio::spawn(async move {
-        loop {
-            match r_channel.wait().await {
-                Some(ChannelMsg::Data { data }) => {
-                    if data_tx.send(data.to_vec()).await.is_err() {
-                        break;
-                    }
-                }
-                Some(ChannelMsg::ExtendedData { data, ext }) => {
-                    // stderr (ext == 1)
-                    if ext == 1 {
-                        let stderr = String::from_utf8_lossy(&data);
-                        for line in stderr.lines() {
-                            debug!("Remote stderr: {}", line);
-                        }
-                    }
-                }
-                Some(ChannelMsg::Eof) => {
-                    debug!("SSH channel EOF");
-                    break;
-                }
-                Some(ChannelMsg::Close) => {
-                    debug!("SSH channel closed");
-                    break;
-                }
-                Some(ChannelMsg::ExitStatus { exit_status }) => {
-                    debug!("Remote process exited with status: {}", exit_status);
-                }
-                Some(_) => {
-                    // Ignore other messages
-                }
-                None => {
-                    break;
-                }
-            }
-        }
-    });
-
-    let reader = ChannelReader {
-        rx: data_rx,
-        buffer: Vec::new(),
-    };
-    let writer = ChannelWriter {
-        channel: Arc::new(tokio::sync::Mutex::new(w_channel)),
-    };
-
-    (reader, writer)
+fn create_channel_io(
+    channel: Channel<Msg>,
+) -> (
+    impl AsyncRead + Unpin + Send,
+    impl AsyncWrite + Unpin + Send,
+) {
+    tokio::io::split(channel.into_stream())
 }
 
-pub struct ChannelReader {
-    rx: mpsc::Receiver<Vec<u8>>,
-    buffer: Vec<u8>,
-}
-
-impl AsyncRead for ChannelReader {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        // If we have buffered data, return that first
-        if !self.buffer.is_empty() {
-            let to_copy = std::cmp::min(buf.remaining(), self.buffer.len());
-            buf.put_slice(&self.buffer[..to_copy]);
-            self.buffer.drain(..to_copy);
-            return std::task::Poll::Ready(Ok(()));
-        }
-
-        // Try to receive more data
-        match self.rx.poll_recv(cx) {
-            std::task::Poll::Ready(Some(data)) => {
-                let to_copy = std::cmp::min(buf.remaining(), data.len());
-                buf.put_slice(&data[..to_copy]);
-                if to_copy < data.len() {
-                    self.buffer.extend_from_slice(&data[to_copy..]);
-                }
-                std::task::Poll::Ready(Ok(()))
-            }
-            std::task::Poll::Ready(None) => {
-                // Channel closed
-                std::task::Poll::Ready(Ok(()))
-            }
-            std::task::Poll::Pending => std::task::Poll::Pending,
-        }
-    }
-}
-
-pub struct ChannelWriter {
-    channel: Arc<tokio::sync::Mutex<ChannelWriteHalf<Msg>>>,
-}
-
-impl AsyncWrite for ChannelWriter {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        use std::future::Future;
-
-        let channel = self.channel.clone();
-        let fut = async move {
-            let len = buf.len();
-            let channel = channel.lock().await;
-            channel.data(buf).await.map(|_| len)
-        };
-        let mut fut = Box::pin(fut);
-        match fut.as_mut().poll(cx) {
-            std::task::Poll::Ready(Ok(n)) => std::task::Poll::Ready(Ok(n)),
-            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(std::io::Error::other(e))),
-            std::task::Poll::Pending => std::task::Poll::Pending,
-        }
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        // SSH channel doesn't need flushing
-        std::task::Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        use std::future::Future;
-
-        let channel = self.channel.clone();
-        let fut = async move {
-            let channel = channel.lock().await;
-            channel.eof().await
-        };
-
-        let mut fut = Box::pin(fut);
-        match fut.as_mut().poll(cx) {
-            std::task::Poll::Ready(Ok(_)) => std::task::Poll::Ready(Ok(())),
-            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(std::io::Error::other(e))),
-            std::task::Poll::Pending => std::task::Poll::Pending,
-        }
-    }
-}
