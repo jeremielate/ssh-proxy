@@ -37,7 +37,6 @@ async fn main() -> anyhow::Result<()> {
                 let log_file = OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .write(true)
                     .open(cache_home)?;
                 tracing_subscriber::registry()
                     .with(fmt::layer().with_writer(log_file).with_line_number(true))

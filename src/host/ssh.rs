@@ -1,9 +1,9 @@
 use anyhow::Context;
 use inquire::{Password, Text};
-use russh::client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse, Msg};
+use russh::client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse};
 use russh::keys::agent::client::AgentClient;
 use russh::keys::{PrivateKeyWithHashAlg, check_known_hosts, load_secret_key};
-use russh::{Channel, MethodKind};
+use russh::MethodKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
