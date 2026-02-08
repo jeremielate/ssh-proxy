@@ -110,9 +110,7 @@ pub async fn connect(
         .context("Failed to execute remote command")?;
 
     // Create a wrapper that provides AsyncRead/AsyncWrite over the SSH channel
-    let (reader, writer) = create_channel_io(channel);
-
-    Ok((reader, writer))
+    Ok(tokio::io::split(channel.into_stream()))
 }
 
 async fn keyboard_interactive_info_request(
@@ -209,13 +207,3 @@ async fn try_agent_auth(
 
     Ok(false)
 }
-
-fn create_channel_io(
-    channel: Channel<Msg>,
-) -> (
-    impl AsyncRead + Unpin + Send,
-    impl AsyncWrite + Unpin + Send,
-) {
-    tokio::io::split(channel.into_stream())
-}
-
