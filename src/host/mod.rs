@@ -450,24 +450,30 @@ async fn handle_remote_message(
         RemoteMessage::TcpData { id, data } => {
             debug!("TCP data from remote: id={}, len={}", id, data.len());
             if let Some(key) = nat_table.get_tcp_connection_key(id) {
-                // Build TCP packet with data
-                let packet = build_tcp_packet(
-                    key.2,
-                    key.0,
-                    key.3,
-                    key.1,
-                    nat_table.get_tcp_seq(id),
-                    nat_table.get_tcp_ack(id),
-                    TcpFlags {
-                        ack: true,
-                        psh: true,
-                        ..Default::default()
-                    },
-                    65535,
-                    &data,
-                );
-                nat_table.advance_tcp_seq(id, data.len() as u32);
-                to_tun_tx.send(packet).await?;
+                // Max TCP payload per IP packet: 65535 - 20 (IPv4) - 20 (TCP) = 65495
+                // Use conservative limit that works for both IPv4 and IPv6
+                const MAX_TCP_PAYLOAD: usize = 65495;
+
+                for chunk in data.chunks(MAX_TCP_PAYLOAD) {
+                    let is_last = chunk.as_ptr_range().end == data.as_ptr_range().end;
+                    let packet = build_tcp_packet(
+                        key.2,
+                        key.0,
+                        key.3,
+                        key.1,
+                        nat_table.get_tcp_seq(id),
+                        nat_table.get_tcp_ack(id),
+                        TcpFlags {
+                            ack: true,
+                            psh: is_last,
+                            ..Default::default()
+                        },
+                        65535,
+                        chunk,
+                    );
+                    nat_table.advance_tcp_seq(id, chunk.len() as u32);
+                    to_tun_tx.send(packet).await?;
+                }
             }
         }
         RemoteMessage::TcpClosed { id } => {
