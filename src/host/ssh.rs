@@ -1,9 +1,10 @@
 use anyhow::Context;
-use inquire::{Password, Text};
+use inquire::{Confirm, Password, Text};
+use russh::MethodKind;
 use russh::client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse};
 use russh::keys::agent::client::AgentClient;
+use russh::keys::known_hosts::learn_known_hosts;
 use russh::keys::{PrivateKeyWithHashAlg, check_known_hosts, load_secret_key};
-use russh::MethodKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -29,8 +30,28 @@ impl Handler for SshHandler {
         &mut self,
         server_public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        check_known_hosts(&self.host, self.port, server_public_key)
+        match check_known_hosts(&self.host, self.port, server_public_key)
             .context("{self.host}:{self.port} known hosts error")
+        {
+            Ok(false) => {
+                if Confirm::new(&format!(
+                    "{}:{} add key {}",
+                    self.host,
+                    self.port,
+                    server_public_key.fingerprint(Default::default())
+                ))
+                .prompt()
+                .unwrap_or(false)
+                {
+                    learn_known_hosts(&self.host, self.port, server_public_key)
+                        .map(|_| true)
+                        .context("cannot learn new host key")
+                } else {
+                    Ok(false)
+                }
+            }
+            e => e,
+        }
     }
 }
 
