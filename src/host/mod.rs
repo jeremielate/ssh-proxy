@@ -319,15 +319,42 @@ async fn handle_outbound_tcp(
 
                 nat_table.set_tcp_state(&key, ConnectionState::FinWait);
             } else if !tcp.payload.is_empty() {
-                // Normal data
-                debug!("TCP data: id={}, len={}", conn_id, tcp.payload.len());
-                nat_table.update_tcp_ack(conn_id, tcp.seq.wrapping_add(tcp.payload.len() as u32));
-                to_remote_tx
-                    .send(HostMessage::TcpData {
-                        id: conn_id,
-                        data: tcp.payload,
-                    })
-                    .await?;
+                // Drop retransmissions: only forward data matching the expected sequence number
+                let expected_seq = nat_table.get_tcp_ack(conn_id);
+                if tcp.seq != expected_seq {
+                    debug!(
+                        "TCP retransmission dropped: id={}, seq={}, expected={}",
+                        conn_id, tcp.seq, expected_seq
+                    );
+                } else {
+                    // Normal data
+                    debug!("TCP data: id={}, len={}", conn_id, tcp.payload.len());
+                    nat_table
+                        .update_tcp_ack(conn_id, tcp.seq.wrapping_add(tcp.payload.len() as u32));
+                    to_remote_tx
+                        .send(HostMessage::TcpData {
+                            id: conn_id,
+                            data: tcp.payload,
+                        })
+                        .await?;
+                }
+
+                // ACK immediately so the kernel doesn't retransmit
+                let ack_packet = build_tcp_packet(
+                    key.2,
+                    key.0,
+                    key.3,
+                    key.1,
+                    nat_table.get_tcp_seq(conn_id),
+                    nat_table.get_tcp_ack(conn_id),
+                    TcpFlags {
+                        ack: true,
+                        ..Default::default()
+                    },
+                    65535,
+                    &[],
+                );
+                to_tun_tx.send(ack_packet).await?;
             }
             // Bare ACKs in Established state are normal (acking our data), ignore
         }
