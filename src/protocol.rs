@@ -133,7 +133,7 @@ where
     debug!("writing message len={len}");
 
     let mut writer = writer.lock().await;
-    let _ = writer.write_all(&len.to_be_bytes()).await;
+    writer.write_all(&len.to_be_bytes()).await?;
     writer.write_all(&data).await?;
     writer.flush().await?;
 
