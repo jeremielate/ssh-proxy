@@ -25,16 +25,14 @@ pub async fn register_dns(
     }
 
     // Set catch-all domain so all queries go through us
-    let mut domain_args = vec!["domain", tun_name];
     if let Some(ref domains) = domains {
-        domain_args.push(domains.as_str());
-    }
-    let status = tokio::process::Command::new("resolvectl")
-        .args(&domain_args)
-        .status()
-        .await?;
-    if !status.success() {
-        anyhow::bail!("resolvectl domain failed with {}", status);
+        let status = tokio::process::Command::new("resolvectl")
+            .args(["domain", tun_name, domains])
+            .status()
+            .await?;
+        if !status.success() {
+            anyhow::bail!("resolvectl domain failed with {}", status);
+        }
     }
 
     info!(
