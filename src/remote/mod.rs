@@ -160,6 +160,10 @@ where
                 self.handle_udp_datagram(src_port, dst_ip, dst_port, data)
                     .await;
             }
+            HostMessage::DnsQuery { id, server, data } => {
+                debug!("DNS query: id={}, server={}", id, server);
+                self.handle_dns_query(id, server, data).await;
+            }
             HostMessage::Shutdown => {
                 info!("Shutdown requested");
                 self.running.store(false, Ordering::Relaxed);
@@ -249,6 +253,30 @@ where
                 }
                 Err(e) => {
                     warn!("UDP send failed: dst={}:{}, error={}", dst_ip, dst_port, e);
+                }
+            }
+        });
+    }
+
+    async fn handle_dns_query(&self, id: u32, server: std::net::IpAddr, data: Vec<u8>) {
+        let response_tx = self.response_tx.clone();
+
+        tokio::spawn(async move {
+            match proxy::send_udp_datagram(server, 53, &data).await {
+                Ok(mut responses) => {
+                    if let Some((_ip, _port, response_data)) = responses.pop() {
+                        let _ = response_tx
+                            .send(RemoteMessage::DnsResponse {
+                                id,
+                                data: response_data,
+                            })
+                            .await;
+                    } else {
+                        warn!("DNS query id={} got no response from {}", id, server);
+                    }
+                }
+                Err(e) => {
+                    warn!("DNS query id={} failed: {}", id, e);
                 }
             }
         });

@@ -41,6 +41,15 @@ pub enum HostMessage {
         /// Datagram payload
         data: Vec<u8>,
     },
+    /// Forward a DNS query to a specific server
+    DnsQuery {
+        /// Query ID for tracking
+        id: u32,
+        /// DNS server to forward to
+        server: IpAddr,
+        /// Raw DNS query data
+        data: Vec<u8>,
+    },
     /// Shutdown the remote proxy
     Shutdown,
 }
@@ -81,6 +90,13 @@ pub enum RemoteMessage {
         /// Source port of the response
         src_port: u16,
         /// Response payload
+        data: Vec<u8>,
+    },
+    /// DNS query response
+    DnsResponse {
+        /// Query ID for tracking
+        id: u32,
+        /// Raw DNS response data
         data: Vec<u8>,
     },
     /// Remote ready

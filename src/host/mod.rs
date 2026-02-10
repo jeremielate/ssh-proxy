@@ -1,3 +1,4 @@
+mod dns;
 mod nat;
 mod routing;
 mod ssh;
@@ -12,8 +13,10 @@ use crate::protocol::{HostMessage, RemoteMessage, read_message, write_message};
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use dns::DnsState;
 use nat::{ConnectionState, NatTable};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::UdpSocket;
 use tokio::signal::ctrl_c;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, error, info, warn};
@@ -61,19 +64,39 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         );
     }
 
+    // Set up DNS forwarder if --dns is specified
+    let dns_state = if let Some(dns_server) = args.dns {
+        let socket = UdpSocket::bind("127.0.0.1:0").await?;
+        let port = socket.local_addr()?.port();
+        info!("DNS forwarder listening on 127.0.0.1:{}", port);
+        dns::register_dns(&args.tun_name, port).await?;
+        Some(Arc::new(DnsState::new(Arc::new(socket), dns_server)))
+    } else {
+        None
+    };
+
     // Run the main proxy loop
-    run_proxy_loop(
+    let result = run_proxy_loop(
         tun_device,
         Arc::new(Mutex::new(ssh_reader)),
         Mutex::new(ssh_writer),
+        dns_state,
     )
-    .await
+    .await;
+
+    // Cleanup DNS registration
+    if args.dns.is_some() {
+        dns::unregister_dns(&args.tun_name).await;
+    }
+
+    result
 }
 
 async fn run_proxy_loop<R, W>(
     mut tun_device: tun::AsyncTunDevice,
     ssh_reader: Arc<Mutex<R>>,
     mut ssh_writer: Mutex<W>,
+    dns_state: Option<Arc<DnsState>>,
 ) -> anyhow::Result<()>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -101,6 +124,7 @@ where
     let (to_tun_tx, mut to_tun_rx) = mpsc::channel::<Vec<u8>>(1024);
 
     let mut tun_buf = vec![0u8; 65536];
+    let mut dns_buf = vec![0u8; 4096];
 
     let (read_message_tx, mut read_message_rx) = mpsc::channel(1024);
     tokio::spawn(async move {
@@ -152,6 +176,7 @@ where
                                 msg,
                                 &nat_table,
                                 &to_tun_tx,
+                                &dns_state,
                             ).await {
                                 debug!("Error handling remote message: {}", e);
                             }
@@ -186,6 +211,20 @@ where
                         error!("TUN write error: {}", e);
                         break;
                     }
+            }
+
+            // Read DNS queries from local socket
+            result = async {
+                match &dns_state {
+                    Some(state) => state.socket.recv_from(&mut dns_buf).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Ok((n, sender)) = result {
+                    if let Some(state) = &dns_state {
+                        state.handle_query(&dns_buf[..n], sender, &to_remote_tx).await;
+                    }
+                }
             }
 
             _ = ctrl_c() => {
@@ -444,6 +483,7 @@ async fn handle_remote_message(
     msg: RemoteMessage,
     nat_table: &Arc<NatTable>,
     to_tun_tx: &mpsc::Sender<Vec<u8>>,
+    dns_state: &Option<Arc<DnsState>>,
 ) -> anyhow::Result<()> {
     use crate::packet::build_udp_packet;
 
@@ -601,6 +641,13 @@ async fn handle_remote_message(
                 to_tun_tx.send(packet).await?;
             } else {
                 warn!("UDP response for unknown mapping: dst_port={}", dst_port);
+            }
+        }
+        RemoteMessage::DnsResponse { id, data } => {
+            if let Some(state) = dns_state {
+                state.handle_response(id, &data).await;
+            } else {
+                warn!("Received DNS response but DNS is not enabled");
             }
         }
         RemoteMessage::Ready => {
