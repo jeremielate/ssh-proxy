@@ -52,6 +52,10 @@ pub struct HostArgs {
     #[arg(long)]
     pub dns: Option<IpAddr>,
 
+    /// Domains to forward to the dns
+    #[arg(long)]
+    pub dns_domains: Option<String>,
+
     /// Enable verbose logging
     #[arg(short, long)]
     pub verbose: bool,

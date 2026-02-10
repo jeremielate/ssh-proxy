@@ -69,7 +69,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let socket = UdpSocket::bind("127.0.0.1:0").await?;
         let port = socket.local_addr()?.port();
         info!("DNS forwarder listening on 127.0.0.1:{}", port);
-        dns::register_dns(&args.tun_name, port).await?;
+        dns::register_dns(&args.tun_name, port, args.dns_domains).await?;
         Some(Arc::new(DnsState::new(Arc::new(socket), dns_server)))
     } else {
         None

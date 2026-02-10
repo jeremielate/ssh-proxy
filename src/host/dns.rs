@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use tokio::net::UdpSocket;
 use tokio::sync::{Mutex, mpsc};
@@ -10,7 +10,11 @@ use tracing::{debug, error, info, warn};
 use crate::protocol::HostMessage;
 
 /// Register our DNS forwarder with systemd-resolved on the given TUN interface.
-pub async fn register_dns(tun_name: &str, listen_port: u16) -> anyhow::Result<()> {
+pub async fn register_dns(
+    tun_name: &str,
+    listen_port: u16,
+    domains: Option<String>,
+) -> anyhow::Result<()> {
     // Set our local forwarder as the DNS server for this link
     let status = tokio::process::Command::new("resolvectl")
         .args(["dns", tun_name, &format!("127.0.0.1:{listen_port}")])
@@ -21,8 +25,12 @@ pub async fn register_dns(tun_name: &str, listen_port: u16) -> anyhow::Result<()
     }
 
     // Set catch-all domain so all queries go through us
+    let mut domain_args = vec!["domain", tun_name];
+    if let Some(ref domains) = domains {
+        domain_args.push(domains.as_str());
+    }
     let status = tokio::process::Command::new("resolvectl")
-        .args(["domain", tun_name, "~."])
+        .args(&domain_args)
         .status()
         .await?;
     if !status.success() {
