@@ -13,6 +13,7 @@ use crate::protocol::{HostMessage, RemoteMessage, read_message, write_message};
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use anyhow::Context;
 use dns::DnsState;
 use nat::{ConnectionState, NatTable};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -103,7 +104,10 @@ where
     W: AsyncWrite + Unpin + Send,
 {
     // Wait for remote to be ready
-    match read_message::<_, RemoteMessage>(Arc::clone(&ssh_reader)).await? {
+    match read_message::<_, RemoteMessage>(Arc::clone(&ssh_reader))
+        .await
+        .context("Remote ready message parse error")?
+    {
         Some(RemoteMessage::Ready) => {
             info!("Remote proxy ready");
         }
