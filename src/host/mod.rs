@@ -79,8 +79,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // Run the main proxy loop
     let result = run_proxy_loop(
         tun_device,
-        Arc::new(Mutex::new(ssh_reader)),
-        Mutex::new(ssh_writer),
+        ssh_reader,
+        ssh_writer,
         dns_state,
     )
     .await;
@@ -95,8 +95,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
 async fn run_proxy_loop<R, W>(
     mut tun_device: tun::AsyncTunDevice,
-    ssh_reader: Arc<Mutex<R>>,
-    mut ssh_writer: Mutex<W>,
+    mut ssh_reader: R,
+    mut ssh_writer: W,
     dns_state: Option<Arc<DnsState>>,
 ) -> anyhow::Result<()>
 where
@@ -104,7 +104,7 @@ where
     W: AsyncWrite + Unpin + Send,
 {
     // Wait for remote to be ready
-    match read_message::<_, RemoteMessage>(Arc::clone(&ssh_reader))
+    match read_message::<_, RemoteMessage>(&mut ssh_reader)
         .await
         .context("Remote ready message parse error")?
     {
@@ -133,7 +133,7 @@ where
     let (read_message_tx, mut read_message_rx) = mpsc::channel(1024);
     tokio::spawn(async move {
         loop {
-            let msg = read_message::<_, RemoteMessage>(Arc::clone(&ssh_reader)).await;
+            let msg = read_message::<_, RemoteMessage>(&mut ssh_reader).await;
             let break_loop = match msg {
                 Ok(None) | Err(_) => true,
                 _ => false,

@@ -106,7 +106,7 @@ pub enum RemoteMessage {
 }
 
 /// Read a length-prefixed message from an async reader
-pub async fn read_message<R, T>(reader: Arc<Mutex<R>>) -> anyhow::Result<Option<T>>
+pub async fn read_message<R, T>(reader: &mut R) -> anyhow::Result<Option<T>>
 where
     R: AsyncRead + Unpin,
     T: for<'de> Deserialize<'de>,
@@ -114,7 +114,7 @@ where
     let buf = {
         // Read 4-byte length prefix
         let mut len_buf = [0u8; 4];
-        let mut reader = reader.lock().await;
+        // let mut reader = reader.lock().await;
         match reader.read_exact(&mut len_buf).await {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
@@ -139,7 +139,7 @@ where
 }
 
 /// Write a length-prefixed message to an async writer
-pub async fn write_message<W, T>(writer: &mut Mutex<W>, msg: &T) -> anyhow::Result<()>
+pub async fn write_message<W, T>(writer: &mut W, msg: &T) -> anyhow::Result<()>
 where
     W: AsyncWrite + Unpin,
     T: Serialize,
@@ -148,7 +148,6 @@ where
     let len = data.len() as u32;
     debug!("writing message len={len}");
 
-    let mut writer = writer.lock().await;
     writer.write_all(&len.to_be_bytes()).await?;
     writer.write_all(&data).await?;
     writer.flush().await?;

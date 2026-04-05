@@ -16,13 +16,11 @@ pub async fn run() -> anyhow::Result<()> {
     let stdin = BufReader::new(stdin());
     let stdout = BufWriter::new(stdout());
 
-    let mut proxy = RemoteProxy::new(stdin, stdout);
-    proxy.run().await
+    let mut proxy = RemoteProxy::new();
+    proxy.run(stdin, stdout).await
 }
 
-struct RemoteProxy<R, W> {
-    reader: R,
-    writer: W,
+struct RemoteProxy {
     tcp_connections: Arc<DashMap<u32, TcpConnectionHandle>>,
     response_tx: mpsc::Sender<RemoteMessage>,
     response_rx: mpsc::Receiver<RemoteMessage>,
@@ -33,16 +31,10 @@ struct TcpConnectionHandle {
     tx: mpsc::Sender<Vec<u8>>,
 }
 
-impl<R, W> RemoteProxy<Arc<Mutex<R>>, Mutex<W>>
-where
-    R: tokio::io::AsyncRead + Unpin + Send + 'static,
-    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
-{
-    fn new(reader: R, writer: W) -> Self {
+impl RemoteProxy {
+    fn new() -> Self {
         let (response_tx, response_rx) = mpsc::channel(1024);
         Self {
-            reader: Arc::new(Mutex::new(reader)),
-            writer: Mutex::new(writer),
             tcp_connections: Arc::new(DashMap::new()),
             response_tx,
             response_rx,
@@ -50,18 +42,21 @@ where
         }
     }
 
-    async fn run(&mut self) -> anyhow::Result<()> {
+    async fn run<R, W>(&mut self, mut reader: R, mut writer: W) -> anyhow::Result<()>
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+        W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
         // Send ready message
-        write_message(&mut self.writer, &RemoteMessage::Ready).await?;
+        write_message(&mut writer, &RemoteMessage::Ready).await?;
         info!("Remote proxy ready");
 
         let (read_message_tx, mut read_message_rx) = mpsc::channel(1024);
 
-        let self_reader = Arc::clone(&self.reader);
         let self_running = Arc::clone(&self.running);
         tokio::spawn(async move {
             loop {
-                let msg = read_message::<_, HostMessage>(self_reader.clone()).await;
+                let msg = read_message::<_, HostMessage>(&mut reader).await;
                 let break_loop = match msg {
                     Ok(None) | Err(_) => true,
                     _ => false,
@@ -107,7 +102,7 @@ where
                 // Send responses back to host
                 response = self.response_rx.recv() => {
                     if let Some(msg) = response
-                        && let Err(e) = write_message(&mut self.writer, &msg).await {
+                        && let Err(e) = write_message(&mut writer, &msg).await {
                             error!("Error writing response: {}", e);
                             break;
                         }

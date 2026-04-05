@@ -10,7 +10,6 @@ pub enum ParsedPacket {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct TcpPacketInfo {
     pub src_ip: IpAddr,
     pub dst_ip: IpAddr,
