@@ -19,7 +19,7 @@ use nat::{ConnectionState, NatTable};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UdpSocket;
 use tokio::signal::ctrl_c;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 /// Run the host mode
@@ -134,10 +134,7 @@ where
     tokio::spawn(async move {
         loop {
             let msg = read_message::<_, RemoteMessage>(&mut ssh_reader).await;
-            let break_loop = match msg {
-                Ok(None) | Err(_) => true,
-                _ => false,
-            };
+            let break_loop = matches!(msg, Ok(None) | Err(_));
             if let Err(e) = read_message_tx.send(msg).await {
                 debug!("read message receiver dropped: {}", e);
                 return;
@@ -224,11 +221,10 @@ where
                     None => std::future::pending().await,
                 }
             } => {
-                if let Ok((n, sender)) = result {
-                    if let Some(state) = &dns_state {
+                if let Ok((n, sender)) = result
+                    && let Some(state) = &dns_state {
                         state.handle_query(&dns_buf[..n], sender, &to_remote_tx).await;
                     }
-                }
             }
 
             _ = ctrl_c() => {
