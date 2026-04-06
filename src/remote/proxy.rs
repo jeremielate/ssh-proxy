@@ -60,8 +60,8 @@ pub async fn handle_tcp_connection(
                     Ok(n) => {
                         let data = read_buf[..n].to_vec();
                         debug!("TCP read: id={}, len={}", id, n);
-                        if response_tx.send(RemoteMessage::TcpData { id, data }).await.is_err() {
-                            warn!("Failed to send TCP data response: id={}", id);
+                        if let Err(err) = response_tx.send(RemoteMessage::TcpData { id, data }).await {
+                            warn!("Failed to send TCP data response: id={}, error={}", id, err);
                             break;
                         }
                     }

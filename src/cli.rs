@@ -13,7 +13,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Run in host mode: create TUN interface and tunnel traffic through SSH
-    Host(HostArgs),
+    Host(Box<HostArgs>),
     /// Run in remote mode: proxy connections (executed automatically via SSH)
     Remote,
 }

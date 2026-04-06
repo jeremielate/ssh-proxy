@@ -57,10 +57,7 @@ impl RemoteProxy {
         tokio::spawn(async move {
             loop {
                 let msg = read_message::<_, HostMessage>(&mut reader).await;
-                let break_loop = match msg {
-                    Ok(None) | Err(_) => true,
-                    _ => false,
-                };
+                let break_loop = matches!(msg, Ok(None) | Err(_));
                 if let Err(e) = read_message_tx.send(msg).await {
                     debug!("read message hang up: {}", e);
                     break;

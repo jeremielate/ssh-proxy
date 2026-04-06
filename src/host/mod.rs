@@ -23,7 +23,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 /// Run the host mode
-pub async fn run(args: HostArgs) -> anyhow::Result<()> {
+pub async fn run(args: Box<HostArgs>) -> anyhow::Result<()> {
     info!("Starting host mode");
 
     // Parse remote connection info
