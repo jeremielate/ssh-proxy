@@ -150,7 +150,6 @@ fn parse_transport(
 }
 
 /// Build a TCP packet
-#[inline]
 pub fn build_tcp_packet(
     src_ip: IpAddr,
     dst_ip: IpAddr,
