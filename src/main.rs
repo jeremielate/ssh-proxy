@@ -1,5 +1,7 @@
 mod cli;
+#[cfg(target_os = "linux")]
 mod host;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod packet;
 mod protocol;
 mod remote;
@@ -22,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     match cli.command {
+        #[cfg(target_os = "linux")]
         Command::Host(args) => {
             tracing_subscriber::registry()
                 .with(fmt::layer().with_line_number(true))
@@ -29,6 +32,10 @@ async fn main() -> anyhow::Result<()> {
                 .init();
 
             host::run(args).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        Command::Host(_) => {
+            anyhow::bail!("host mode is only supported on Linux (requires TUN device)")
         }
         Command::Remote => {
             // Log to stderr only in remote mode

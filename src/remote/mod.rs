@@ -78,9 +78,7 @@ impl RemoteProxy {
                     if let Some(msg) = msg {
                         match msg {
                             Ok(Some(msg)) => {
-                                if let Err(e) = self.handle_host_message(msg).await {
-                                    error!("Error handling host message: {}", e);
-                                }
+                                self.handle_host_message(msg).await;
                             }
                             Ok(None) => {
                                 info!("Host disconnected");
@@ -115,7 +113,7 @@ impl RemoteProxy {
         Ok(())
     }
 
-    async fn handle_host_message(&mut self, msg: HostMessage) -> anyhow::Result<()> {
+    async fn handle_host_message(&mut self, msg: HostMessage) {
         match msg {
             HostMessage::TcpConnect {
                 id,
@@ -161,7 +159,6 @@ impl RemoteProxy {
                 self.running.store(false, Ordering::Relaxed);
             }
         }
-        Ok(())
     }
 
     async fn handle_tcp_connect(&self, id: u32, dst_ip: std::net::IpAddr, dst_port: u16) {

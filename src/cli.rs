@@ -68,6 +68,7 @@ fn default_user() -> String {
 }
 
 /// Parse a remote string like "user@host" or "user@host:port"
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn parse_remote(remote: &str) -> anyhow::Result<(String, u16)> {
     if remote.contains(':') {
         let parts: Vec<&str> = remote.splitn(2, ':').collect();
@@ -79,6 +80,7 @@ pub fn parse_remote(remote: &str) -> anyhow::Result<(String, u16)> {
 }
 
 /// Parse a CIDR notation string like "192.168.1.0/24" or "fd00::/64"
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn parse_cidr(cidr: &str) -> anyhow::Result<(IpAddr, u8)> {
     let parts: Vec<&str> = cidr.split('/').collect();
     if parts.len() != 2 {

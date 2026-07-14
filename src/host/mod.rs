@@ -1,3 +1,6 @@
+#[cfg(not(target_os = "linux"))]
+compile_error!("Host mode only supports Linux (requires TUN device and rtnetlink)");
+
 mod dns;
 mod nat;
 mod routing;
