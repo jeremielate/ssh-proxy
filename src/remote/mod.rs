@@ -61,7 +61,7 @@ impl RemoteProxy {
                 if let Err(e) = read_message_tx.send(msg).await {
                     debug!("read message hang up: {}", e);
                     break;
-                };
+                }
                 if break_loop {
                     break;
                 }
@@ -124,7 +124,7 @@ impl RemoteProxy {
                     "TCP connect request: id={}, dst={}:{}",
                     id, dst_ip, dst_port
                 );
-                self.handle_tcp_connect(id, dst_ip, dst_port).await;
+                self.handle_tcp_connect(id, dst_ip, dst_port);
             }
             HostMessage::TcpData { id, data } => {
                 debug!("TCP data: id={}, len={}", id, data.len());
@@ -132,7 +132,7 @@ impl RemoteProxy {
             }
             HostMessage::TcpClose { id } => {
                 debug!("TCP close: id={}", id);
-                self.handle_tcp_close(id).await;
+                self.handle_tcp_close(id);
             }
             HostMessage::UdpDatagram {
                 src_port,
@@ -147,12 +147,11 @@ impl RemoteProxy {
                     dst_port,
                     data.len()
                 );
-                self.handle_udp_datagram(src_port, dst_ip, dst_port, data)
-                    .await;
+                self.handle_udp_datagram(src_port, dst_ip, dst_port, data);
             }
             HostMessage::DnsQuery { id, server, data } => {
                 debug!("DNS query: id={}, server={}", id, server);
-                self.handle_dns_query(id, server, data).await;
+                self.handle_dns_query(id, server, data);
             }
             HostMessage::Shutdown => {
                 info!("Shutdown requested");
@@ -161,7 +160,7 @@ impl RemoteProxy {
         }
     }
 
-    async fn handle_tcp_connect(&self, id: u32, dst_ip: std::net::IpAddr, dst_port: u16) {
+    fn handle_tcp_connect(&self, id: u32, dst_ip: std::net::IpAddr, dst_port: u16) {
         let response_tx = self.response_tx.clone();
         let connections = self.tcp_connections.clone();
         let running = self.running.clone();
@@ -211,13 +210,13 @@ impl RemoteProxy {
         }
     }
 
-    async fn handle_tcp_close(&self, id: u32) {
+    fn handle_tcp_close(&self, id: u32) {
         if self.tcp_connections.remove(&id).is_some() {
             debug!("TCP connection removed: id={}", id);
         }
     }
 
-    async fn handle_udp_datagram(
+    fn handle_udp_datagram(
         &self,
         src_port: u16,
         dst_ip: std::net::IpAddr,
@@ -247,7 +246,7 @@ impl RemoteProxy {
         });
     }
 
-    async fn handle_dns_query(&self, id: u32, server: std::net::IpAddr, data: Vec<u8>) {
+    fn handle_dns_query(&self, id: u32, server: std::net::IpAddr, data: Vec<u8>) {
         let response_tx = self.response_tx.clone();
 
         tokio::spawn(async move {

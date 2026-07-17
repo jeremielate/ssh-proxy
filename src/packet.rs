@@ -28,6 +28,7 @@ pub struct TcpPacketInfo {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct TcpFlags {
     pub syn: bool,
     pub ack: bool,
@@ -55,7 +56,7 @@ pub fn parse_ip_packet(data: &[u8]) -> anyhow::Result<ParsedPacket> {
     match version {
         4 => parse_ipv4_packet(data),
         6 => parse_ipv6_packet(data),
-        _ => anyhow::bail!("Unknown IP version: {}", version),
+        _ => anyhow::bail!("Unknown IP version: {version}"),
     }
 }
 
@@ -152,8 +153,7 @@ fn parse_transport(
     }
 }
 
-/// Build a TCP packet
-pub fn build_tcp_packet(
+struct TcpPacket<'a> {
     src_ip: IpAddr,
     dst_ip: IpAddr,
     src_port: u16,
@@ -162,61 +162,76 @@ pub fn build_tcp_packet(
     ack: u32,
     flags: TcpFlags,
     window: u16,
-    payload: &[u8],
-) -> Vec<u8> {
-    let builder = match (src_ip, dst_ip) {
-        (IpAddr::V4(src), IpAddr::V4(dst)) => PacketBuilder::ipv4(src.octets(), dst.octets(), 64),
-        (IpAddr::V6(src), IpAddr::V6(dst)) => PacketBuilder::ipv6(src.octets(), dst.octets(), 64),
-        _ => panic!("Mismatched IP address families in build_tcp_packet"),
-    };
-
-    let mut tcp = builder.tcp(src_port, dst_port, seq, window);
-
-    if flags.syn {
-        tcp = tcp.syn();
-    }
-    if flags.ack {
-        tcp = tcp.ack(ack);
-    }
-    if flags.fin {
-        tcp = tcp.fin();
-    }
-    if flags.rst {
-        tcp = tcp.rst();
-    }
-    if flags.psh {
-        tcp = tcp.psh();
-    }
-
-    let mut result = Vec::with_capacity(60 + payload.len());
-    tcp.write(&mut result, payload)
-        .expect("Failed to write TCP packet");
-    result
+    payload: &'a [u8],
 }
 
-/// Build a UDP packet
-pub fn build_udp_packet(
+impl TcpPacket<'_> {
+    /// Build a TCP packet
+    pub fn build(&self) -> Vec<u8> {
+        let builder = match (self.src_ip, self.dst_ip) {
+            (IpAddr::V4(src), IpAddr::V4(dst)) => {
+                PacketBuilder::ipv4(src.octets(), dst.octets(), 64)
+            }
+            (IpAddr::V6(src), IpAddr::V6(dst)) => {
+                PacketBuilder::ipv6(src.octets(), dst.octets(), 64)
+            }
+            _ => panic!("Mismatched IP address families in build_tcp_packet"),
+        };
+
+        let mut tcp = builder.tcp(self.src_port, self.dst_port, self.seq, self.window);
+
+        if self.flags.syn {
+            tcp = tcp.syn();
+        }
+        if self.flags.ack {
+            tcp = tcp.ack(self.ack);
+        }
+        if self.flags.fin {
+            tcp = tcp.fin();
+        }
+        if self.flags.rst {
+            tcp = tcp.rst();
+        }
+        if self.flags.psh {
+            tcp = tcp.psh();
+        }
+
+        let mut result = Vec::with_capacity(60 + self.payload.len());
+        tcp.write(&mut result, self.payload)
+            .expect("Failed to write TCP packet");
+        result
+    }
+}
+
+struct UdpPacket<'a> {
     src_ip: IpAddr,
     dst_ip: IpAddr,
     src_port: u16,
     dst_port: u16,
-    payload: &[u8],
-) -> Vec<u8> {
-    let builder = match (src_ip, dst_ip) {
-        (IpAddr::V4(src), IpAddr::V4(dst)) => {
-            PacketBuilder::ipv4(src.octets(), dst.octets(), 64).udp(src_port, dst_port)
-        }
-        (IpAddr::V6(src), IpAddr::V6(dst)) => {
-            PacketBuilder::ipv6(src.octets(), dst.octets(), 64).udp(src_port, dst_port)
-        }
-        _ => panic!("Mismatched IP address families in build_udp_packet"),
-    };
+    payload: &'a [u8],
+}
 
-    let mut result = Vec::with_capacity(28 + payload.len());
-    builder
-        .write(&mut result, payload)
-        .expect("Failed to write UDP packet");
-    result
+impl UdpPacket<'_> {
+    /// Build a UDP packet
+    pub fn build(&self) -> Vec<u8> {
+        let builder = match (self.src_ip, self.dst_ip) {
+            (IpAddr::V4(src), IpAddr::V4(dst)) => {
+                PacketBuilder::ipv4(src.octets(), dst.octets(), 64)
+                    .udp(self.src_port, self.dst_port)
+            }
+            (IpAddr::V6(src), IpAddr::V6(dst)) => {
+                PacketBuilder::ipv6(src.octets(), dst.octets(), 64)
+                    .udp(self.src_port, self.dst_port)
+            }
+            _ => panic!("Mismatched IP address families in build_udp_packet"),
+        };
+
+        let mut result = Vec::with_capacity(28 + self.payload.len());
+        builder
+            .write(&mut result, self.payload)
+            .expect("Failed to write UDP packet");
+        result
+    }
 }
 
 #[cfg(test)]
@@ -227,20 +242,21 @@ mod tests {
     fn test_tcp_packet_roundtrip() {
         let src = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
         let dst = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        let packet = build_tcp_packet(
-            src,
-            dst,
-            12345,
-            80,
-            1000,
-            0,
-            TcpFlags {
+        let packet = TcpPacket {
+            src_ip: src,
+            dst_ip: dst,
+            src_port: 12345,
+            dst_port: 80,
+            seq: 1000,
+            ack: 0,
+            flags: TcpFlags {
                 syn: true,
                 ..Default::default()
             },
-            65535,
-            &[],
-        );
+            window: 65535,
+            payload: &[],
+        }
+        .build();
 
         match parse_ip_packet(&packet).unwrap() {
             ParsedPacket::Tcp(info) => {
@@ -259,7 +275,14 @@ mod tests {
         let src = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
         let dst = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
         let payload = b"Hello, UDP!";
-        let packet = build_udp_packet(src, dst, 54321, 53, payload);
+        let packet = UdpPacket {
+            src_ip: src,
+            dst_ip: dst,
+            src_port: 54321,
+            dst_port: 53,
+            payload,
+        }
+        .build();
 
         match parse_ip_packet(&packet).unwrap() {
             ParsedPacket::Udp(info) => {
@@ -277,20 +300,21 @@ mod tests {
     fn test_tcp_packet_roundtrip_ipv6() {
         let src = IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1));
         let dst = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
-        let packet = build_tcp_packet(
-            src,
-            dst,
-            12345,
-            443,
-            2000,
-            0,
-            TcpFlags {
+        let packet = TcpPacket {
+            src_ip: src,
+            dst_ip: dst,
+            src_port: 12345,
+            dst_port: 443,
+            seq: 2000,
+            ack: 0,
+            flags: TcpFlags {
                 syn: true,
                 ..Default::default()
             },
-            65535,
-            &[],
-        );
+            window: 65535,
+            payload: &[],
+        }
+        .build();
 
         match parse_ip_packet(&packet).unwrap() {
             ParsedPacket::Tcp(info) => {
@@ -309,7 +333,14 @@ mod tests {
         let src = IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1));
         let dst = IpAddr::V6(Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888));
         let payload = b"Hello, IPv6 UDP!";
-        let packet = build_udp_packet(src, dst, 54321, 53, payload);
+        let packet = UdpPacket {
+            src_ip: src,
+            dst_ip: dst,
+            src_port: 54321,
+            dst_port: 53,
+            payload,
+        }
+        .build();
 
         match parse_ip_packet(&packet).unwrap() {
             ParsedPacket::Udp(info) => {

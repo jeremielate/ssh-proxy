@@ -9,7 +9,7 @@ mod tun;
 
 use crate::cli::{HostArgs, parse_cidr, parse_remote};
 use crate::packet::{
-    ParsedPacket, TcpFlags, TcpPacketInfo, UdpPacketInfo, build_tcp_packet, parse_ip_packet,
+    ParsedPacket, TcpFlags, TcpPacket, TcpPacketInfo, UdpPacket, UdpPacketInfo, parse_ip_packet,
 };
 use crate::protocol::{HostMessage, RemoteMessage, read_message, write_message};
 
@@ -80,13 +80,7 @@ pub async fn run(args: Box<HostArgs>) -> anyhow::Result<()> {
     };
 
     // Run the main proxy loop
-    let result = run_proxy_loop(
-        tun_device,
-        ssh_reader,
-        ssh_writer,
-        dns_state,
-    )
-    .await;
+    let result = run_proxy_loop(tun_device, ssh_reader, ssh_writer, dns_state).await;
 
     // Cleanup DNS registration
     if args.dns.is_some() {
@@ -338,20 +332,21 @@ async fn handle_outbound_tcp(
                 }
 
                 // Send ACK for the FIN back to app
-                let ack_packet = build_tcp_packet(
-                    key.2,
-                    key.0,
-                    key.3,
-                    key.1,
-                    nat_table.get_tcp_seq(conn_id),
-                    nat_table.get_tcp_ack(conn_id),
-                    TcpFlags {
+                let ack_packet = TcpPacket {
+                    src_ip: key.2,
+                    dst_ip: key.0,
+                    src_port: key.3,
+                    dst_port: key.1,
+                    seq: nat_table.get_tcp_seq(conn_id),
+                    ack: nat_table.get_tcp_ack(conn_id),
+                    flags: TcpFlags {
                         ack: true,
                         ..Default::default()
                     },
-                    65535,
-                    &[],
-                );
+                    window: 65535,
+                    payload: &[],
+                }
+                .build();
                 to_tun_tx.send(ack_packet).await?;
 
                 // Tell remote to close
@@ -382,20 +377,21 @@ async fn handle_outbound_tcp(
                 }
 
                 // ACK immediately so the kernel doesn't retransmit
-                let ack_packet = build_tcp_packet(
-                    key.2,
-                    key.0,
-                    key.3,
-                    key.1,
-                    nat_table.get_tcp_seq(conn_id),
-                    nat_table.get_tcp_ack(conn_id),
-                    TcpFlags {
+                let ack_packet = TcpPacket {
+                    src_ip: key.2,
+                    dst_ip: key.0,
+                    src_port: key.3,
+                    dst_port: key.1,
+                    seq: nat_table.get_tcp_seq(conn_id),
+                    ack: nat_table.get_tcp_ack(conn_id),
+                    flags: TcpFlags {
                         ack: true,
                         ..Default::default()
                     },
-                    65535,
-                    &[],
-                );
+                    window: 65535,
+                    payload: &[],
+                }
+                .build();
                 to_tun_tx.send(ack_packet).await?;
             }
             // Bare ACKs in Established state are normal (acking our data), ignore
@@ -410,20 +406,21 @@ async fn handle_outbound_tcp(
                 let fin_ack = tcp.seq.wrapping_add(1);
                 nat_table.update_tcp_ack(conn_id, fin_ack);
 
-                let ack_packet = build_tcp_packet(
-                    key.2,
-                    key.0,
-                    key.3,
-                    key.1,
-                    nat_table.get_tcp_seq(conn_id),
-                    nat_table.get_tcp_ack(conn_id),
-                    TcpFlags {
+                let ack_packet = TcpPacket {
+                    src_ip: key.2,
+                    dst_ip: key.0,
+                    src_port: key.3,
+                    dst_port: key.1,
+                    seq: nat_table.get_tcp_seq(conn_id),
+                    ack: nat_table.get_tcp_ack(conn_id),
+                    flags: TcpFlags {
                         ack: true,
                         ..Default::default()
                     },
-                    65535,
-                    &[],
-                );
+                    window: 65535,
+                    payload: &[],
+                }
+                .build();
                 to_tun_tx.send(ack_packet).await?;
 
                 // Both sides have FIN'd, fully closed
@@ -488,8 +485,6 @@ async fn handle_remote_message(
     to_tun_tx: &mpsc::Sender<Vec<u8>>,
     dns_state: &Option<Arc<DnsState>>,
 ) -> anyhow::Result<()> {
-    use crate::packet::build_udp_packet;
-
     match msg {
         RemoteMessage::TcpConnected { id } => {
             debug!("TCP connected: id={}", id);
@@ -497,21 +492,22 @@ async fn handle_remote_message(
                 nat_table.set_tcp_state(&key, ConnectionState::Established);
 
                 // Send SYN-ACK back to application
-                let packet = build_tcp_packet(
-                    key.2, // dst_ip becomes src
-                    key.0, // src_ip becomes dst
-                    key.3, // dst_port becomes src
-                    key.1, // src_port becomes dst
-                    nat_table.get_tcp_seq(id),
-                    nat_table.get_tcp_ack(id),
-                    TcpFlags {
+                let packet = TcpPacket {
+                    src_ip: key.2,   // dst_ip becomes src
+                    dst_ip: key.0,   // src_ip becomes dst
+                    src_port: key.3, // dst_port becomes src
+                    dst_port: key.1, // src_port becomes dst
+                    seq: nat_table.get_tcp_seq(id),
+                    ack: nat_table.get_tcp_ack(id),
+                    flags: TcpFlags {
                         syn: true,
                         ack: true,
                         ..Default::default()
                     },
-                    65535,
-                    &[],
-                );
+                    window: 65535,
+                    payload: &[],
+                }
+                .build();
                 // SYN consumes one sequence number
                 nat_table.advance_tcp_seq_syn(id);
                 to_tun_tx.send(packet).await?;
@@ -526,21 +522,22 @@ async fn handle_remote_message(
 
                 for chunk in data.chunks(MAX_TCP_PAYLOAD) {
                     let is_last = chunk.as_ptr_range().end == data.as_ptr_range().end;
-                    let packet = build_tcp_packet(
-                        key.2,
-                        key.0,
-                        key.3,
-                        key.1,
-                        nat_table.get_tcp_seq(id),
-                        nat_table.get_tcp_ack(id),
-                        TcpFlags {
+                    let packet = TcpPacket {
+                        src_ip: key.2,
+                        dst_ip: key.0,
+                        src_port: key.3,
+                        dst_port: key.1,
+                        seq: nat_table.get_tcp_seq(id),
+                        ack: nat_table.get_tcp_ack(id),
+                        flags: TcpFlags {
                             ack: true,
                             psh: is_last,
                             ..Default::default()
                         },
-                        65535,
-                        chunk,
-                    );
+                        window: 65535,
+                        payload: chunk,
+                    }
+                    .build();
                     nat_table.advance_tcp_seq(id, chunk.len() as u32);
                     to_tun_tx.send(packet).await?;
                 }
@@ -553,21 +550,22 @@ async fn handle_remote_message(
                 match state {
                     Some(ConnectionState::Established) => {
                         // Remote closed first — send FIN+ACK to app
-                        let packet = build_tcp_packet(
-                            key.2,
-                            key.0,
-                            key.3,
-                            key.1,
-                            nat_table.get_tcp_seq(id),
-                            nat_table.get_tcp_ack(id),
-                            TcpFlags {
+                        let packet = TcpPacket {
+                            src_ip: key.2,
+                            dst_ip: key.0,
+                            src_port: key.3,
+                            dst_port: key.1,
+                            seq: nat_table.get_tcp_seq(id),
+                            ack: nat_table.get_tcp_ack(id),
+                            flags: TcpFlags {
                                 fin: true,
                                 ack: true,
                                 ..Default::default()
                             },
-                            65535,
-                            &[],
-                        );
+                            window: 65535,
+                            payload: &[],
+                        }
+                        .build();
                         // FIN consumes 1 sequence number
                         nat_table.advance_tcp_seq(id, 1);
                         to_tun_tx.send(packet).await?;
@@ -575,21 +573,22 @@ async fn handle_remote_message(
                     }
                     Some(ConnectionState::FinWait) => {
                         // App closed first, remote now confirms close — send FIN+ACK to app
-                        let packet = build_tcp_packet(
-                            key.2,
-                            key.0,
-                            key.3,
-                            key.1,
-                            nat_table.get_tcp_seq(id),
-                            nat_table.get_tcp_ack(id),
-                            TcpFlags {
+                        let packet = TcpPacket {
+                            src_ip: key.2,
+                            dst_ip: key.0,
+                            src_port: key.3,
+                            dst_port: key.1,
+                            seq: nat_table.get_tcp_seq(id),
+                            ack: nat_table.get_tcp_ack(id),
+                            flags: TcpFlags {
                                 fin: true,
                                 ack: true,
                                 ..Default::default()
                             },
-                            65535,
-                            &[],
-                        );
+                            window: 65535,
+                            payload: &[],
+                        }
+                        .build();
                         nat_table.advance_tcp_seq(id, 1);
                         to_tun_tx.send(packet).await?;
                         nat_table.set_tcp_state(&key, ConnectionState::LastAck);
@@ -606,20 +605,21 @@ async fn handle_remote_message(
             warn!("TCP error: id={}, error={}", id, error);
             if let Some(key) = nat_table.get_tcp_connection_key(id) {
                 // Send RST packet
-                let packet = build_tcp_packet(
-                    key.2,
-                    key.0,
-                    key.3,
-                    key.1,
-                    0,
-                    0,
-                    TcpFlags {
+                let packet = TcpPacket {
+                    src_ip: key.2,
+                    dst_ip: key.0,
+                    src_port: key.3,
+                    dst_port: key.1,
+                    seq: 0,
+                    ack: 0,
+                    flags: TcpFlags {
                         rst: true,
                         ..Default::default()
                     },
-                    0,
-                    &[],
-                );
+                    window: 0,
+                    payload: &[],
+                }
+                .build();
                 to_tun_tx.send(packet).await?;
                 nat_table.close_tcp_connection(&key);
             }
@@ -640,7 +640,14 @@ async fn handle_remote_message(
 
             // Find the original source IP for this UDP "connection"
             if let Some(original_src_ip) = nat_table.get_udp_src_ip(dst_port, src_ip, src_port) {
-                let packet = build_udp_packet(src_ip, original_src_ip, src_port, dst_port, &data);
+                let packet = UdpPacket {
+                    src_ip,
+                    dst_ip: original_src_ip,
+                    src_port,
+                    dst_port,
+                    payload: &data,
+                }
+                .build();
                 to_tun_tx.send(packet).await?;
             } else {
                 warn!("UDP response for unknown mapping: dst_port={}", dst_port);

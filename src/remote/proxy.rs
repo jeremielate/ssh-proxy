@@ -1,7 +1,7 @@
 use crate::protocol::RemoteMessage;
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
@@ -28,22 +28,19 @@ pub async fn handle_tcp_connection(
         tokio::select! {
             // Data from host to send to destination
             data = rx.recv() => {
-                match data {
-                    Some(data) => {
-                        if let Err(e) = writer.write_all(&data).await {
-                            warn!("TCP write error: id={}, error={}", id, e);
-                            let _ = response_tx.send(RemoteMessage::TcpError {
-                                id,
-                                error: e.to_string(),
-                            }).await;
-                            break;
-                        }
-                    }
-                    None => {
-                        // Channel closed, connection should close
-                        debug!("TCP channel closed: id={}", id);
+                if let Some(data) = data {
+                    if let Err(e) = writer.write_all(&data).await {
+                        warn!("TCP write error: id={}, error={}", id, e);
+                        let _ = response_tx.send(RemoteMessage::TcpError {
+                            id,
+                            error: e.to_string(),
+                        }).await;
                         break;
                     }
+                } else {
+                    // Channel closed, connection should close
+                    debug!("TCP channel closed: id={}", id);
+                    break;
                 }
             }
 
@@ -107,32 +104,27 @@ pub async fn send_udp_datagram(
     // Use a short timeout to collect any responses
     let timeout = Duration::from_secs(5);
 
-    loop {
-        tokio::select! {
-            result = socket.recv_from(&mut buf) => {
-                match result {
-                    Ok((len, addr)) => {
-                        responses.push((
-                            addr.ip(),
-                            addr.port(),
-                            buf[..len].to_vec(),
-                        ));
-                        // For most UDP protocols, one response is enough
-                        // For DNS, the response is complete in one packet
-                        break;
-                    }
-                    Err(e) => {
-                        if responses.is_empty() {
-                            return Err(e.into());
-                        }
-                        break;
+    tokio::select! {
+        result = socket.recv_from(&mut buf) => {
+            match result {
+                Ok((len, addr)) => {
+                    responses.push((
+                        addr.ip(),
+                        addr.port(),
+                        buf[..len].to_vec(),
+                    ));
+                    // For most UDP protocols, one response is enough
+                    // For DNS, the response is complete in one packet
+                }
+                Err(e) => {
+                    if responses.is_empty() {
+                        return Err(e.into());
                     }
                 }
             }
-            _ = tokio::time::sleep(timeout) => {
-                // Timeout - return what we have
-                break;
-            }
+        }
+        () = tokio::time::sleep(timeout) => {
+            // Timeout - return what we have
         }
     }
 

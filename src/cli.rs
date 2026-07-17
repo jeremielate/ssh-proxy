@@ -79,7 +79,7 @@ pub fn parse_remote(remote: &str) -> anyhow::Result<(String, u16)> {
     }
 }
 
-/// Parse a CIDR notation string like "192.168.1.0/24" or "fd00::/64"
+/// Parse a CIDR notation string like `192.168.1.0/24` or `fd00::/64`
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn parse_cidr(cidr: &str) -> anyhow::Result<(IpAddr, u8)> {
     let parts: Vec<&str> = cidr.split('/').collect();
@@ -96,7 +96,7 @@ pub fn parse_cidr(cidr: &str) -> anyhow::Result<(IpAddr, u8)> {
     };
 
     if prefix > max_prefix {
-        anyhow::bail!("Invalid prefix length: {} (max {} for {:?})", prefix, max_prefix, ip);
+        anyhow::bail!("Invalid prefix length: {prefix} (max {max_prefix} for {ip:?})");
     }
 
     Ok((ip, prefix))

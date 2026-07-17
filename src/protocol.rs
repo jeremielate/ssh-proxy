@@ -81,7 +81,7 @@ pub enum RemoteMessage {
     },
     /// UDP response datagram
     UdpResponse {
-        /// Destination port on host (original src_port)
+        /// Destination port on host (original `src_port`)
         dst_port: u16,
         /// Source IP of the response
         src_ip: IpAddr,
@@ -110,19 +110,20 @@ where
     T: for<'de> Deserialize<'de>,
 {
     let buf = {
-        // Read 4-byte length prefix
-        let mut len_buf = [0u8; 4];
+        // Read 8-byte length prefix
+        let mut len_buf = [0u8; size_of::<u64>()];
         // let mut reader = reader.lock().await;
         match reader.read_exact(&mut len_buf).await {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
             Err(e) => return Err(e.into()),
         }
-        let len = u32::from_be_bytes(len_buf) as usize;
+        let len = u64::from_be_bytes(len_buf);
 
         if len > 16 * 1024 * 1024 {
-            anyhow::bail!("Message too large: {} bytes", len);
+            anyhow::bail!("Message too large: {len} bytes");
         }
+        let len = usize::try_from(len)?;
 
         // Read message body
         debug!("reading message len={len}");
@@ -143,7 +144,7 @@ where
     T: Serialize,
 {
     let data: Vec<u8> = postcard::to_allocvec(msg)?;
-    let len = data.len() as u32;
+    let len = u64::try_from(data.len())?;
     debug!("writing message len={len}");
 
     writer.write_all(&len.to_be_bytes()).await?;

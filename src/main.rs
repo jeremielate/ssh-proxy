@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
                     )
                     .with(filter)
                     .init();
-            };
+            }
             remote::run().await
         }
     }
