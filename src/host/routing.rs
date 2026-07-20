@@ -99,7 +99,7 @@ pub async fn remove_route(tun_name: &str, subnet: IpAddr, prefix: u8) -> anyhow:
         }
     }
 
-    anyhow::bail!("Route {}/{} via {} not found", subnet, prefix, tun_name)
+    anyhow::bail!("Route {subnet}/{prefix} via {tun_name} not found")
 }
 
 async fn get_interface_index(handle: &Handle, name: &str) -> anyhow::Result<u32> {
@@ -108,6 +108,6 @@ async fn get_interface_index(handle: &Handle, name: &str) -> anyhow::Result<u32>
     if let Some(link) = links.try_next().await? {
         Ok(link.header.index)
     } else {
-        anyhow::bail!("Interface {} not found", name)
+        anyhow::bail!("Interface {name} not found")
     }
 }

@@ -3,10 +3,10 @@ use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-/// Key for TCP connection: (src_ip, src_port, dst_ip, dst_port)
+/// Key for TCP connection: (`src_ip`, `src_port`, `dst_ip`, `dst_port`)
 pub type TcpKey = (IpAddr, u16, IpAddr, u16);
 
-/// Key for UDP "connection": (src_ip, src_port, dst_ip, dst_port)
+/// Key for UDP "connection": (`src_ip`, `src_port`, `dst_ip`, `dst_port`)
 #[allow(dead_code)]
 pub type UdpKey = (IpAddr, u16, IpAddr, u16);
 
@@ -14,7 +14,7 @@ pub type UdpKey = (IpAddr, u16, IpAddr, u16);
 pub enum ConnectionState {
     SynSent,
     Established,
-    /// App sent FIN first, we ACK'd it and told remote to close, waiting for TcpClosed
+    /// App sent FIN first, we ACK'd it and told remote to close, waiting for `TcpClosed`
     FinWait,
     /// Remote closed first, we sent FIN to app, waiting for app's FIN
     CloseWait,
@@ -35,11 +35,11 @@ struct UdpMapping {
 }
 
 pub struct NatTable {
-    /// TCP connections indexed by (src_ip, src_port, dst_ip, dst_port)
+    /// TCP connections indexed by (`src_ip`, `src_port`, `dst_ip`, `dst_port`)
     tcp_by_key: DashMap<TcpKey, TcpConnection>,
     /// TCP connections indexed by connection ID (for reverse lookup)
     tcp_by_id: DashMap<u32, TcpKey>,
-    /// UDP mappings indexed by (src_port, dst_ip, dst_port) for return path
+    /// UDP mappings indexed by (`src_port`, `dst_ip`, `dst_port`) for return path
     udp_mappings: DashMap<(u16, IpAddr, u16), UdpMapping>,
     /// Next connection ID
     next_id: AtomicU32,
@@ -62,7 +62,7 @@ impl NatTable {
         let conn = TcpConnection {
             id,
             state: ConnectionState::SynSent,
-            seq: 1000,              // Our ISN for the SYN-ACK
+            seq: 1000,                       // Our ISN for the SYN-ACK
             ack: client_isn.wrapping_add(1), // Acknowledge the client's SYN
         };
 
@@ -120,9 +120,10 @@ impl NatTable {
     /// Advance the TCP sequence number
     pub fn advance_tcp_seq(&self, id: u32, bytes: u32) {
         if let Some(key) = self.tcp_by_id.get(&id)
-            && let Some(mut conn) = self.tcp_by_key.get_mut(key.value()) {
-                conn.seq = conn.seq.wrapping_add(bytes);
-            }
+            && let Some(mut conn) = self.tcp_by_key.get_mut(key.value())
+        {
+            conn.seq = conn.seq.wrapping_add(bytes);
+        }
     }
 
     /// Advance the TCP seq by 1 (for SYN which consumes one sequence number)
@@ -133,9 +134,10 @@ impl NatTable {
     /// Update TCP ack number based on received data
     pub fn update_tcp_ack(&self, id: u32, ack: u32) {
         if let Some(key) = self.tcp_by_id.get(&id)
-            && let Some(mut conn) = self.tcp_by_key.get_mut(key.value()) {
-                conn.ack = ack;
-            }
+            && let Some(mut conn) = self.tcp_by_key.get_mut(key.value())
+        {
+            conn.ack = ack;
+        }
     }
 
     /// Track a UDP packet for return path routing
@@ -154,12 +156,7 @@ impl NatTable {
     }
 
     /// Get the original source IP for a UDP response
-    pub fn get_udp_src_ip(
-        &self,
-        dst_port: u16,
-        src_ip: IpAddr,
-        src_port: u16,
-    ) -> Option<IpAddr> {
+    pub fn get_udp_src_ip(&self, dst_port: u16, src_ip: IpAddr, src_port: u16) -> Option<IpAddr> {
         let key = (dst_port, src_ip, src_port);
         self.udp_mappings.get(&key).map(|m| m.src_ip)
     }
@@ -169,9 +166,8 @@ impl NatTable {
         let timeout = Duration::from_secs(60);
         let now = Instant::now();
 
-        self.udp_mappings.retain(|_, mapping| {
-            now.duration_since(mapping.last_activity) < timeout
-        });
+        self.udp_mappings
+            .retain(|_, mapping| now.duration_since(mapping.last_activity) < timeout);
     }
 }
 

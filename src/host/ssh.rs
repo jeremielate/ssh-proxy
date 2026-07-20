@@ -4,7 +4,7 @@ use russh::MethodKind;
 use russh::client::{self, AuthResult, Handler, KeyboardInteractiveAuthResponse};
 use russh::keys::agent::client::AgentClient;
 use russh::keys::known_hosts::learn_known_hosts;
-use russh::keys::{PrivateKeyWithHashAlg, check_known_hosts, load_secret_key};
+use russh::keys::{HashAlg, PrivateKeyWithHashAlg, check_known_hosts, load_secret_key};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -38,13 +38,13 @@ impl Handler for SshHandler {
                     "{}:{} add key {}",
                     self.host,
                     self.port,
-                    server_public_key.fingerprint(Default::default())
+                    server_public_key.fingerprint(HashAlg::default())
                 ))
                 .prompt()
                 .unwrap_or(false)
                 {
                     learn_known_hosts(&self.host, self.port, server_public_key)
-                        .map(|_| true)
+                        .map(|()| true)
                         .context("cannot learn new host key")
                 } else {
                     Ok(false)
@@ -91,23 +91,22 @@ pub async fn connect(
     } else {
         // Try SSH agent first
         info!("Attempting SSH agent authentication");
-        match try_agent_auth(&mut session, &config.user).await {
-            Ok(true) => true,
-            Ok(false) | Err(_) => {
-                // Fall back to password
-                info!("SSH agent auth failed, falling back to password");
-                let password =
-                    Password::new(&(format!("Password for {}@{}: ", config.user, config.host)))
-                        .without_confirmation()
-                        .prompt()
-                        .context("Failed to read password")?;
+        if let Ok(true) = try_agent_auth(&mut session, &config.user).await {
+            true
+        } else {
+            // Fall back to password
+            info!("SSH agent auth failed, falling back to password");
+            let password =
+                Password::new(&(format!("Password for {}@{}: ", config.user, config.host)))
+                    .without_confirmation()
+                    .prompt()
+                    .context("Failed to read password")?;
 
-                let auth_result = session
-                    .authenticate_password(&config.user, &password)
-                    .await
-                    .context("Password authentication failed")?;
-                auth_result.success()
-            }
+            let auth_result = session
+                .authenticate_password(&config.user, &password)
+                .await
+                .context("Password authentication failed")?;
+            auth_result.success()
         }
     };
 
@@ -177,7 +176,7 @@ async fn try_agent_auth(
         let pubkey = identity.public_key();
         debug!(
             "Trying SSH agent key {}",
-            pubkey.fingerprint(Default::default())
+            pubkey.fingerprint(HashAlg::default())
         );
         // For agent auth, we need to use authenticate_publickey_with which uses the agent
         // to sign the authentication request
@@ -222,7 +221,6 @@ async fn try_agent_auth(
             }
             Err(e) => {
                 debug!("Agent auth attempt failed: {}", e);
-                continue;
             }
         }
     }

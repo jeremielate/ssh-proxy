@@ -25,6 +25,14 @@ use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
+/// A packet payload length as a `u32` for TCP sequence arithmetic.
+///
+/// A payload parsed from an IP packet is bounded by the 16-bit total-length
+/// field, so it always fits in a `u32`; the saturating cast is defensive.
+fn payload_len_u32(len: usize) -> u32 {
+    u32::try_from(len).unwrap_or(u32::MAX)
+}
+
 /// Run the host mode
 pub async fn run(args: Box<HostArgs>) -> anyhow::Result<()> {
     info!("Starting host mode");
@@ -90,6 +98,7 @@ pub async fn run(args: Box<HostArgs>) -> anyhow::Result<()> {
     result
 }
 
+#[allow(clippy::too_many_lines)] // central select! loop; splitting it would obscure the flow
 async fn run_proxy_loop<R, W>(
     mut tun_device: tun::AsyncTunDevice,
     mut ssh_reader: R,
@@ -109,7 +118,7 @@ where
             info!("Remote proxy ready");
         }
         Some(other) => {
-            anyhow::bail!("Unexpected message from remote: {:?}", other);
+            anyhow::bail!("Unexpected message from remote: {other:?}");
         }
         None => {
             anyhow::bail!("Remote disconnected before ready");
@@ -135,7 +144,7 @@ where
             if let Err(e) = read_message_tx.send(msg).await {
                 debug!("read message receiver dropped: {}", e);
                 return;
-            };
+            }
             if break_loop {
                 return;
             }
@@ -174,7 +183,7 @@ where
                                 msg,
                                 &nat_table,
                                 &to_tun_tx,
-                                &dns_state,
+                                dns_state.as_ref(),
                             ).await {
                                 debug!("Error handling remote message: {}", e);
                             }
@@ -261,6 +270,7 @@ async fn handle_tun_packet(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // TCP state machine reads best as one function
 async fn handle_outbound_tcp(
     tcp: TcpPacketInfo,
     nat_table: &Arc<NatTable>,
@@ -317,7 +327,7 @@ async fn handle_outbound_tcp(
                 // ACK the FIN (FIN consumes 1 seq number, plus any payload)
                 let fin_ack = tcp
                     .seq
-                    .wrapping_add(tcp.payload.len() as u32)
+                    .wrapping_add(payload_len_u32(tcp.payload.len()))
                     .wrapping_add(1);
                 nat_table.update_tcp_ack(conn_id, fin_ack);
 
@@ -358,22 +368,24 @@ async fn handle_outbound_tcp(
             } else if !tcp.payload.is_empty() {
                 // Drop retransmissions: only forward data matching the expected sequence number
                 let expected_seq = nat_table.get_tcp_ack(conn_id);
-                if tcp.seq != expected_seq {
-                    debug!(
-                        "TCP retransmission dropped: id={}, seq={}, expected={}",
-                        conn_id, tcp.seq, expected_seq
-                    );
-                } else {
+                if tcp.seq == expected_seq {
                     // Normal data
                     debug!("TCP data: id={}, len={}", conn_id, tcp.payload.len());
-                    nat_table
-                        .update_tcp_ack(conn_id, tcp.seq.wrapping_add(tcp.payload.len() as u32));
+                    nat_table.update_tcp_ack(
+                        conn_id,
+                        tcp.seq.wrapping_add(payload_len_u32(tcp.payload.len())),
+                    );
                     to_remote_tx
                         .send(HostMessage::TcpData {
                             id: conn_id,
                             data: tcp.payload,
                         })
                         .await?;
+                } else {
+                    debug!(
+                        "TCP retransmission dropped: id={}, seq={}, expected={}",
+                        conn_id, tcp.seq, expected_seq
+                    );
                 }
 
                 // ACK immediately so the kernel doesn't retransmit
@@ -479,11 +491,12 @@ async fn handle_outbound_udp(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // one match arm per RemoteMessage variant
 async fn handle_remote_message(
     msg: RemoteMessage,
     nat_table: &Arc<NatTable>,
     to_tun_tx: &mpsc::Sender<Vec<u8>>,
-    dns_state: &Option<Arc<DnsState>>,
+    dns_state: Option<&Arc<DnsState>>,
 ) -> anyhow::Result<()> {
     match msg {
         RemoteMessage::TcpConnected { id } => {
@@ -538,7 +551,7 @@ async fn handle_remote_message(
                         payload: chunk,
                     }
                     .build();
-                    nat_table.advance_tcp_seq(id, chunk.len() as u32);
+                    nat_table.advance_tcp_seq(id, payload_len_u32(chunk.len()));
                     to_tun_tx.send(packet).await?;
                 }
             }

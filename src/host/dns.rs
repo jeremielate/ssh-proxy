@@ -21,7 +21,7 @@ pub async fn register_dns(
         .status()
         .await?;
     if !status.success() {
-        anyhow::bail!("resolvectl dns failed with {}", status);
+        anyhow::bail!("resolvectl dns failed with {status}");
     }
 
     // Set catch-all domain so all queries go through us
@@ -31,7 +31,7 @@ pub async fn register_dns(
             .status()
             .await?;
         if !status.success() {
-            anyhow::bail!("resolvectl domain failed with {}", status);
+            anyhow::bail!("resolvectl domain failed with {status}");
         }
     }
 

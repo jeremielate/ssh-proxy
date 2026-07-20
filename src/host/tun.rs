@@ -20,6 +20,9 @@ impl AsyncTunDevice {
 }
 
 /// Create a TUN device with the given name and IP address
+// Kept async: the interface is awaited by callers and the commented-out
+// rtnetlink setup below is expected to reintroduce `.await`.
+#[allow(clippy::unused_async)]
 pub async fn create_tun(name: &str) -> anyhow::Result<AsyncTunDevice> {
     // use netlink_packet_route::link::InfoKind;
     // use rtnetlink::{LinkMessageBuilder, new_connection};
@@ -57,9 +60,9 @@ pub async fn create_tun(name: &str) -> anyhow::Result<AsyncTunDevice> {
 #[allow(dead_code)]
 fn prefix_to_netmask(prefix: u8) -> Ipv4Addr {
     if prefix == 0 {
-        Ipv4Addr::new(0, 0, 0, 0)
+        Ipv4Addr::UNSPECIFIED
     } else if prefix >= 32 {
-        Ipv4Addr::new(255, 255, 255, 255)
+        Ipv4Addr::BROADCAST
     } else {
         let mask = !((1u32 << (32 - prefix)) - 1);
         Ipv4Addr::from(mask)
@@ -72,10 +75,10 @@ mod tests {
 
     #[test]
     fn test_prefix_to_netmask() {
-        assert_eq!(prefix_to_netmask(0), Ipv4Addr::new(0, 0, 0, 0));
+        assert_eq!(prefix_to_netmask(0), Ipv4Addr::UNSPECIFIED);
         assert_eq!(prefix_to_netmask(8), Ipv4Addr::new(255, 0, 0, 0));
         assert_eq!(prefix_to_netmask(16), Ipv4Addr::new(255, 255, 0, 0));
         assert_eq!(prefix_to_netmask(24), Ipv4Addr::new(255, 255, 255, 0));
-        assert_eq!(prefix_to_netmask(32), Ipv4Addr::new(255, 255, 255, 255));
+        assert_eq!(prefix_to_netmask(32), Ipv4Addr::BROADCAST);
     }
 }

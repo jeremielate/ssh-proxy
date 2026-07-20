@@ -136,7 +136,10 @@ mod tests {
         assert_eq!(prefix, 64);
 
         let (ip, prefix) = parse_cidr("2001:db8::/32").unwrap();
-        assert_eq!(ip, IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0)));
+        assert_eq!(
+            ip,
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0))
+        );
         assert_eq!(prefix, 32);
     }
 
