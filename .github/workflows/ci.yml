@@ -45,11 +45,36 @@ jobs:
       - name: Test
         run: cargo test --verbose
 
+  # Create the GitHub Release on a `v*` tag push. Pushing a tag alone does
+  # not create a Release, so the upload step below would fail with "release
+  # not found" without this. Skipped on regular pushes/PRs.
+  create-release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to create the Release
+    steps:
+      - uses: actions/checkout@v4
+      # Creates a Release from the pushed tag (empty body, no changelog file
+      # required). Pair for upload-rust-binary-action.
+      - uses: taiki-e/create-gh-release-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # Build release artifacts. Runs on every push/PR as a compile check, and
-  # uploads to a GitHub Release when triggered by a `v*` tag.
+  # uploads to the GitHub Release when triggered by a `v*` tag.
   release:
     name: Release (${{ matrix.target }})
-    needs: [lint, test]
+    # create-release only runs on tags; on non-tag builds it is skipped, and a
+    # skipped dependency still lets this job run (it just won't upload).
+    needs: [lint, test, create-release]
+    if: |
+      always() &&
+      needs.lint.result == 'success' &&
+      needs.test.result == 'success' &&
+      (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write # required to upload assets to the GitHub Release
@@ -80,7 +105,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [lint, test, release]
+    needs: [lint, test, create-release, release]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
