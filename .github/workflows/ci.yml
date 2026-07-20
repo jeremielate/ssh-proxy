@@ -21,7 +21,7 @@ jobs:
     name: Lint (fmt + clippy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # rustup installs the channel/components/targets pinned in
       # rust-toolchain.toml automatically on first use.
       - name: Show toolchain
@@ -36,7 +36,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Show toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
@@ -56,7 +56,7 @@ jobs:
     permissions:
       contents: write # required to create the Release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Creates a Release from the pushed tag, using the matching section of
       # CHANGELOG.md as the release notes. Pair for upload-rust-binary-action.
       - uses: taiki-e/create-gh-release-action@v1
@@ -87,7 +87,7 @@ jobs:
           - target: x86_64-unknown-linux-musl
           - target: aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Upload / build binary
         uses: taiki-e/upload-rust-binary-action@v1
         with:
