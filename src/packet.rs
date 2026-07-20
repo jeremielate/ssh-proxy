@@ -153,16 +153,16 @@ fn parse_transport(
     }
 }
 
-struct TcpPacket<'a> {
-    src_ip: IpAddr,
-    dst_ip: IpAddr,
-    src_port: u16,
-    dst_port: u16,
-    seq: u32,
-    ack: u32,
-    flags: TcpFlags,
-    window: u16,
-    payload: &'a [u8],
+pub struct TcpPacket<'a> {
+    pub src_ip: IpAddr,
+    pub dst_ip: IpAddr,
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub seq: u32,
+    pub ack: u32,
+    pub flags: TcpFlags,
+    pub window: u16,
+    pub payload: &'a [u8],
 }
 
 impl TcpPacket<'_> {
@@ -203,12 +203,12 @@ impl TcpPacket<'_> {
     }
 }
 
-struct UdpPacket<'a> {
-    src_ip: IpAddr,
-    dst_ip: IpAddr,
-    src_port: u16,
-    dst_port: u16,
-    payload: &'a [u8],
+pub struct UdpPacket<'a> {
+    pub src_ip: IpAddr,
+    pub dst_ip: IpAddr,
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub payload: &'a [u8],
 }
 
 impl UdpPacket<'_> {

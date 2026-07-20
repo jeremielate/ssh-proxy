@@ -173,7 +173,8 @@ async fn try_agent_auth(
 
     let identities = agent.request_identities().await?;
 
-    'identities_loop: for pubkey in identities {
+    'identities_loop: for identity in identities {
+        let pubkey = identity.public_key();
         debug!(
             "Trying SSH agent key {}",
             pubkey.fingerprint(Default::default())
@@ -181,7 +182,7 @@ async fn try_agent_auth(
         // For agent auth, we need to use authenticate_publickey_with which uses the agent
         // to sign the authentication request
         match session
-            .authenticate_publickey_with(user, pubkey, None, &mut agent)
+            .authenticate_publickey_with(user, pubkey.into_owned(), None, &mut agent)
             .await
         {
             Ok(AuthResult::Success) => return Ok(true),
