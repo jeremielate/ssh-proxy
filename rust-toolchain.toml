@@ -1,7 +1,7 @@
 [toolchain]
 # Pinned so clippy's pedantic lint set stays stable across CI runs and dev
 # machines; bump deliberately when adopting a newer toolchain.
-channel = "1.94.1"
+channel = "1.97.1"
 components = ["rustfmt", "clippy"]
 targets = [
     "x86_64-unknown-linux-musl",
