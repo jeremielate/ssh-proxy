@@ -163,7 +163,7 @@ impl NatTable {
 
     /// Remove stale UDP mappings (older than 60 seconds)
     fn cleanup_udp_mappings(&self) {
-        let timeout = Duration::from_min(1);
+        let timeout = Duration::from_mins(1);
         let now = Instant::now();
 
         self.udp_mappings
