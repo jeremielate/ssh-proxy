@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-russh = { version = "0.62", features = ["async-trait"] }
+russh = { version = "0.64", features = ["async-trait"] }
 tokio = { version = "1", features = ["full", "io-util"] }
 etherparse = "0.20"
 clap = { version = "4", features = ["derive"] }
